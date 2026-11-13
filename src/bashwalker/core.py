@@ -1627,6 +1627,17 @@ def _lexed(node: tree_sitter.Node) -> list[tuple[str, bool]]:
     return out
 
 
+def _lexed_head(lexed: list[tuple[str, bool]]) -> int | None:
+    """``_skip_prefixes`` for lexed words: the index of the word that runs, None when
+    nothing runs (no word, or `command -v`/`-V`), ``UNREADABLE`` when a prefix option
+    cannot be read."""
+    words = [Word(text=t, literal=lit, source=t) for t, lit in lexed]
+    i = _skip_prefixes(words)
+    if i is None or i == UNREADABLE:
+        return i
+    return i if i < len(words) else None
+
+
 # Variables a builtin writes when no name is given.
 _IMPLICIT_WRITES = {"read": ("REPLY",), "mapfile": ("MAPFILE",), "readarray": ("MAPFILE",),
                     "getopts": ("OPTARG",)}
@@ -1684,13 +1695,8 @@ def _unproven_arithmetic(root: tree_sitter.Node) -> bool:
             declaration(_lexed(node), node)  # the keyword is not a named child
         elif node.type == "command":
             lexed = _lexed(node)
-            words = [t for t, _ in lexed]
-            i = 0
-            while i < len(words) and words[i] in BUILTIN_PREFIXES:
-                i += 1
-                while i < len(words) and words[i].startswith("-"):
-                    i += 1
-            if i < len(words) and words[i] in _INTEGER_DECLARERS:
+            i = _lexed_head(lexed)
+            if i is not None and lexed[i][0] in _INTEGER_DECLARERS:
                 declaration(lexed[i + 1 :], node)
     for node in nodes:
         kind = node.type
@@ -1767,13 +1773,12 @@ def _unproven_arithmetic(root: tree_sitter.Node) -> bool:
         elif kind == "command":
             lexed = _lexed(node)
             words = [t for t, _ in lexed]
-            i = 0
-            while i < len(words) and words[i] in (*BUILTIN_PREFIXES, "time"):
-                i += 1
-                while i < len(words) and words[i].startswith("-"):
-                    i += 1
-            if i >= len(words):
+            i = _lexed_head(lexed)
+            if i == UNREADABLE:
+                opaque = True  # `command "$o" …`: what runs is not known
                 continue
+            if i is None:
+                continue  # no command word, or `command -v`: nothing runs
             head, rest = words[i], words[i + 1 :]
             if not lexed[i][1] or head in SHELL_RUNNERS or head in CODE_LATER:
                 # `eval 'x=…'`, `source f`, `$cmd`, an alias: may write any variable.

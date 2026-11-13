@@ -72,7 +72,10 @@ facts by a caller.
   against bash, `bash -n` and shfmt by sampling generated lines, not exhaustively. A new
   disagreement that gives a wrong fact without being flagged is in scope.
 - Arithmetic on a value from run time is flagged unless the walker proves it is a number
-  (#6). An integer attribute or an unset `RANDOM`-like variable left by an earlier command
+  (#6): only from writes that run (not behind `&&`, `||`, `?:`, not to another array
+  element), with the implicit writes of `read`, `select`, `mapfile` and `getopts`
+  counted, and with no proof at all when `eval`, `source`, an alias or a dynamic name may
+  write variables; `declare -A`/`-i` count once they have run (#12). An integer attribute or an unset `RANDOM`-like variable left by an earlier command
   in a persistent session is session state the walker cannot see; a hidden command reached
   through arithmetic in one line is in scope.
 - Wrong stdin and prefix facts for `PATH=… $(true)` and `coproc` (nl-shell#212). Known;

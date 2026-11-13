@@ -553,6 +553,7 @@ ARITHMETIC_SINKS = [
     "x=1; eval 'x=$X'; echo $((x))",
     "v=x; x=1; read \"$v\"; echo $((x))",
     "y=$X; declare -i y; echo $((y))",
+    "p=1 command -v declare -A m >/dev/null; echo ${m[X]}",
 ]
 
 

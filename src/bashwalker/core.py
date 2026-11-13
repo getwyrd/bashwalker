@@ -2031,6 +2031,8 @@ def _may_split(source: str) -> bool:
     return False
 
 
+# A name written plainly, perhaps after an opening double quote (`"PATH=$x"`), up to `=`.
+_WRITTEN_NAME = re.compile(r'"?[A-Za-z_]\w*(?:\[[^\]$`"\\]*\])?\+?=')
 _DECLARED_NAME = re.compile(r"[A-Za-z_]\w*(?:\[.*\])?\+?", re.S)
 _ARRAY_LITERAL = re.compile(r"[A-Za-z_]\w*(?:\[[^\]]*\])?\+?=\(")
 
@@ -2057,7 +2059,8 @@ def _unproven_declaration(keyword: str, words: list[tuple[str, bool, str]]) -> b
             if not literal or (keyword in _INTEGER_DECLARERS and text[0] == "-" and "i" in text[1:]):
                 return True  # `declare -i x`, `declare "$opt" x`
             continue
-        if not literal and not _STATIC_NAME.match(text):
+        if not literal and not _WRITTEN_NAME.match(source):
+            # Judged as written: `export OPT"$s"=…` lexes to `OPT…=` but may name OPTIND.
             return True  # `export "$name=$value"`: the name is not known
         name, equals, value = text.partition("=")
         if literal and not functions and not _DECLARED_NAME.fullmatch(name):

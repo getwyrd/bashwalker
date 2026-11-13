@@ -667,6 +667,8 @@ ARITHMETIC_SINKS = [
     ": | let >/dev/null X",
     # Eighteenth local review of #13.
     "OPT\\\nIND=$X",
+    # Nineteenth local review of #13.
+    's=IND; export OPT"$s"="$X"',
     "REPLY=1; read -p x; echo $((REPLY))",
     "REPLY=1; read -r -t 1 -d '' ; echo $((REPLY))",
     "v=x; x=1; mapfile -t \"$v\"; echo $((x))",

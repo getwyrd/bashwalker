@@ -185,7 +185,7 @@ def test_rule1_quoted_text_is_trusted():
         "echo ${a[0]} ${a[@]} ${#a[*]}",
         "grep 'a[bc]' f; awk '{c[$1]++}'; sed -n 's/[$]//p' f",
         "[[ $x =~ ^a[0-9]+$ ]]",
-        "declare -A m; m['key']=1; a[1]=2; m[\"$k\"]=3; printf '%s\\n' $'a[\\t]'",
+        "a[1]=2; printf '%s\\n' $'a[\\t]'",
         "echo $(( 1 + 2 )) $(( 2 * ${#y} ))",
         "echo \"$PS1\" ${PS4:-x}; MYPS4=1",
         "x=$(date); y=\"$(id -u)\"; z=`pwd`; w=${HOME}",
@@ -562,6 +562,13 @@ ARITHMETIC_SINKS = [
     "command time declare -A m 2>/dev/null; echo ${m[X]}",
     "p=1 builtin declare 'x[1]=1'; echo $((x))",
     "x=1; time -- eval 'x=$X'; echo $((x))",
+    # Ways a variable set in the line changes before it is read (local review of #13).
+    "x=1; mapfile -C 'x=$X; :' -c 1 a <<<z; echo $((x))",
+    "declare -A m; unset m; m[X]=1",
+    "BASH_REMATCH=1; [[ $X =~ (.*) ]]; echo $((BASH_REMATCH))",
+    "set -o posix; x=1; x=$X export y; echo $((x))",
+    "f() { x=$X; }; x=1; f; echo $((x))",
+    "option=-v; x=1; printf \"$option\" x %s \"$X\"; echo $((x))",
     "REPLY=1; read -p x; echo $((REPLY))",
     "REPLY=1; read -r -t 1 -d '' ; echo $((REPLY))",
     "v=x; x=1; mapfile -t \"$v\"; echo $((x))",
@@ -569,9 +576,17 @@ ARITHMETIC_SINKS = [
 ]
 
 
-# Safe in bash, flagged anyway: a write in a function, or by `printf`/`read`/`for`, is not
-# proven to give a number, so the variable stays unproven (fail closed).
+# Safe in bash, flagged anyway: no variable is proven a number, not even one set earlier in
+# the line, because any command in between may change it (a function from the session,
+# `eval`, `cd`, `unset`); associative keys count as arithmetic too (fail closed).
 ARITHMETIC_UNPROVEN = [
+    "for ((i=0; i<3; i++)); do echo $i; done",
+    "n=5; echo $((n * 2))",
+    "i=0; while ((i < 3)); do ((i++)); done",
+    "x=$((2 + 3)); echo $((x))",
+    "declare -A m; echo ${m[key]} ${m[$k]}",
+    "export PATH=\"$PATH:/x\"; y=1; echo $((y))",
+    "echo $((x=1, x))",
     "f() { x=1; }; f; echo $((x))",
     "printf -vx %s 1; echo $((x))",
     "for x in 1; do :; done; echo $((x))",
@@ -585,30 +600,16 @@ def test_arithmetic_on_unproven_values_is_untrusted(command):
     assert any("arithmetic" in f for f in bashwalker.walk(command).untrusted), command
 
 
-def test_arithmetic_on_proven_numbers_is_trusted():
+def test_arithmetic_on_literal_numbers_is_trusted():
     for command in (
         "echo $((1 + 2)) $[3] $((0x1f + 16#ff + 2#101))",
-        "for ((i=0; i<3; i++)); do echo $i; done",
-        "n=5; echo $((n * 2))",
-        "i=0; while ((i < 3)); do ((i++)); done",
-        "((i = 0)); echo $((i + 1))",
         "echo $((RANDOM % 6)) $((SECONDS + LINENO)) $(($# + $?))",
         "a=(1 2); echo ${a[0]} ${a[@]} ${#a[*]} ${a[1]}",
-        "declare -A m; m[key]=1; echo ${m[key]} ${m[$k]}",
-        "s=abc; echo ${s:1:2} ${s: -1} ${x:-d} ${x:=d}",
+        "s=abc; echo ${s:1:2} ${s: -1} ${x:-d} ${x:=d} ${#s}",
         "[ \"$X\" -eq 0 ]; test \"$X\" -eq 0",
         "declare -i y=5; y=6",
-        "x=$((2 + 3)); echo $((x))",
-        "x=1; ((x++)); echo $((x))",
-        "x=(1 2); x[1]=3; echo $((x))",
-        "declare -A m; echo ${m[$k]} ${m[key]}",
-        "declare -i y; y=5; echo $((y))",
-        "REPLY=1; read x <<<foo; echo $((REPLY))",
-        "REPLY=1; read -r -a arr <<<foo; echo $((REPLY))",
-        "MAPFILE=1; mapfile -t a <<<foo; echo $((MAPFILE))",
-        'export PATH="$PATH:/x"; y=1; echo $((y))',
-        "x=1; printf '%s' \"$HOME\"; echo $((x))",
-        "x=1; read -p \"$prompt\" y; echo $((x))",
+        "((x = 1)); echo $((2 * ${#y}))",
+        "REPLY=1; read x <<<foo",
     ):
         walked = bashwalker.walk(command)
         assert not any("arithmetic" in f for f in walked.untrusted), (command, walked.untrusted)

@@ -71,12 +71,11 @@ facts by a caller.
 - Rule 1 lists the grammar disagreements found so far; the differential test checks it
   against bash, `bash -n` and shfmt by sampling generated lines, not exhaustively. A new
   disagreement that gives a wrong fact without being flagged is in scope.
-- Arithmetic on a value from run time is flagged unless the walker proves it is a number
-  (#6): only from writes that run (not behind `&&`, `||`, `?:`, not to another array
-  element), with the implicit writes of `read`, `select`, `mapfile` and `getopts`
-  counted, and with no proof at all when `eval`, `source`, an alias or a dynamic name may
-  write variables; `declare -A`/`-i` count once they have run (#12). An integer attribute or an unset `RANDOM`-like variable left by an earlier command
-  in a persistent session is session state the walker cannot see; a hidden command reached
+- Arithmetic that reads a variable, a command's output or an argument is flagged (#6,
+  #12); only literal numbers and bash's own numeric variables count as numbers, not even a
+  variable set earlier in the line, since a function from the session may change it in
+  between. An integer attribute or an unset `RANDOM` left by an earlier command in a
+  persistent session is session state the walker cannot see; a hidden command reached
   through arithmetic in one line is in scope.
 - Wrong stdin and prefix facts for `PATH=… $(true)` and `coproc` (nl-shell#212). Known;
   variants beyond them are in scope.

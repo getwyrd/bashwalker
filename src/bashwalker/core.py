@@ -1532,14 +1532,17 @@ def may_rewire_stdin(invocation: Invocation) -> bool:
 #
 # bash evaluates some values as arithmetic, and an array subscript in such a value runs
 # its command substitutions: with X='a[$(id)]' in the environment, `echo $((X))` runs
-# `id`. A value written in the line is already flagged (``_holds_substitution_text``);
-# one that exists only at run time (the environment, `read`, a command's output, an
-# argument) is not visible, so any arithmetic read the walker cannot prove to be a number
-# makes the tree untrusted. Checked against bash 5.3, these contexts evaluate a value:
-# `$(( ))`, `$[ ]`, `(( ))`, `for (( ))`, `let`, the numeric tests of `[[ ]]`, indexed
-# subscripts (`${a[i]}`, `a[i]=`, `unset a[i]`), `${s:off:len}`, and assignments to a
-# variable declared `-i` in the line. `[ ]`, `test`, `printf %d`, `shift`, `exit`,
-# `return` and associative keys do not.
+# `id`. Checked against bash 5.3, these contexts evaluate a value: `$(( ))`, `$[ ]`,
+# `(( ))`, `for (( ))`, `let`, the numeric tests of `[[ ]]`, subscripts (`${a[i]}`,
+# `a[i]=`, `unset a[i]`), `${s:off:len}`, and assignments to a variable declared `-i`.
+# `[ ]`, `test`, `printf %d`, `shift`, `exit` and `return` do not.
+#
+# Any variable such a context reads makes the tree untrusted, as does a command's output
+# or an argument: only literal numbers and bash's own numeric variables are proven. A
+# variable set earlier in the same line is not proven either, because any command in
+# between (a function from the session, `eval`, `cd`, `[[ =~ ]]`, an `unset`) may have
+# changed it. Subscripts count as arithmetic even for associative arrays, whose
+# declaration the walker cannot prove is still in effect.
 
 # bash's own numeric variables.
 _SAFE_NUMERIC = frozenset(
@@ -1552,61 +1555,27 @@ _LENGTH = re.compile(r"\$\{#[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?\}")
 _POSITIONAL = re.compile(r"\$\{?[#!]?[0-9@*]")
 _COMMAND_OUTPUT = re.compile(r"\$\((?!\()|`")
 _BARE_NAME = re.compile(r"(?<![\w$#])([A-Za-z_][A-Za-z0-9_]*)")
-_ARITHMETIC_WRITE = re.compile(
-    r"(?:\+\+|--)\s*([A-Za-z_]\w*)|([A-Za-z_]\w*)\s*(?:\+\+|--|(?:\*\*|<<|>>|[-+*/%&|^])?=(?!=))"
-)
+# A plain `name=` only assigns (`name+=` and the like also read).
 _PLAIN_ASSIGNMENT = re.compile(r"(?<![\w$])[A-Za-z_]\w*\s*=(?!=)")
-_NUMERIC_VALUE = re.compile(
-    r"[-+]?[0-9]+|\$\(\(.*\)\)|\$\[.*\]|\(\s*(?:[-+]?[0-9]+\s*)*\)|\$\{?(?:"
-    + "|".join(sorted(_SAFE_NUMERIC))
-    + r")\}?",
-    re.S,
-)
 _ARITHMETIC_TESTS = ("-eq", "-ne", "-lt", "-le", "-gt", "-ge")
-_VARIABLE_WRITERS = ("read", "printf", "mapfile", "readarray", "getopts", "wait")
 _INTEGER_DECLARERS = ("declare", "typeset", "local")
 _SUBSTRING = re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?:(?![-=?+])(.*)\}$", re.S)
-# Containers a write can sit in and still run once, before what follows it.
-_UNCONDITIONAL = frozenset(
-    (
-        "program", "variable_assignment", "variable_assignments", "declaration_command",
-        "command", "redirected_statement", "compound_statement", "arithmetic_expansion",
-        "binary_expression", "unary_expression", "postfix_expression",
-        "parenthesized_expression", "word", "number", "variable_name", "subscript",
-        "concatenation", "string", "expansion", "simple_expansion",
-    )
-)
 
 
 def _node_text(node: tree_sitter.Node) -> str:
     return node.text.decode("utf-8", "replace")
 
 
-def _arithmetic_names(text: str) -> tuple[set[str], bool]:
-    """The variables an arithmetic text reads, and whether it reads a value that is never
-    a proven number (a command's output or an argument)."""
+def _unproven(text: str) -> bool:
+    """Whether an arithmetic text reads anything but literal numbers and bash's own
+    numeric variables: a variable, a command's output or an argument."""
     text = _LENGTH.sub(" 0 ", text)
-    runtime = bool(_COMMAND_OUTPUT.search(text) or _POSITIONAL.search(text))
+    if _COMMAND_OUTPUT.search(text) or _POSITIONAL.search(text):
+        return True
     names = set(_REFERENCE.findall(text))
-    # A plain `name=` only assigns (`name+=` and the like also read).
-    rest = _PLAIN_ASSIGNMENT.sub(" ", _REFERENCE.sub(" ", text))
-    rest = _INT_CONSTANT.sub(" ", rest)
+    rest = _INT_CONSTANT.sub(" ", _PLAIN_ASSIGNMENT.sub(" ", _REFERENCE.sub(" ", text)))
     names |= set(_BARE_NAME.findall(rest))
-    return names, runtime
-
-
-def _unconditional(node: tree_sitter.Node) -> bool:
-    """Whether ``node`` runs exactly once, in the current shell, before anything after it
-    in the line: every container up to the program is one of ``_UNCONDITIONAL`` (no list,
-    pipeline, subshell, function, loop, condition or substitution)."""
-    current = node.parent
-    while current is not None:
-        if current.type not in _UNCONDITIONAL:
-            return False
-        if current.type == "command" and node.type == "variable_assignment":
-            return False  # `x=1 cmd`: the assignment is for that command only
-        current = current.parent
-    return True
+    return bool(names - _SAFE_NUMERIC)
 
 
 def _in_double_bracket(node: tree_sitter.Node) -> bool:
@@ -1615,10 +1584,6 @@ def _in_double_bracket(node: tree_sitter.Node) -> bool:
     while current is not None and current.type != "test_command":
         current = current.parent
     return current is not None and bool(current.children) and current.children[0].type == "[["
-
-
-def _words(node: tree_sitter.Node) -> list[str]:
-    return [text for text, _ in _lexed(node)]
 
 
 def _lexed(node: tree_sitter.Node) -> list[tuple[str, bool]]:
@@ -1651,282 +1616,80 @@ def _lexed_head(node: tree_sitter.Node) -> int | None:
     return i if i < len(words) else None
 
 
-# Variables a builtin writes when it is given no destination, and its options that take an
-# argument (`read -p x` reads into REPLY: x is the prompt).
-_IMPLICIT_WRITES = {"read": ("REPLY",), "mapfile": ("MAPFILE",), "readarray": ("MAPFILE",)}
-_ARGUMENT_OPTIONS = {"read": "adinNptu", "mapfile": "dnOsuCc", "readarray": "dnOsuCc"}
-
-
-# A declaration operand whose name is literal even if its value is not (`PATH="$PATH:/x"`).
-_STATIC_NAME = re.compile(r"[A-Za-z_]\w*(?:\[[^\]]*\])?\+?=")
-
-# Where each variable-writing builtin takes its destination: by option (the option's
-# argument is a name) and by operand position (``"all"`` = every operand, else the index
-# among operands). The other options that take an argument, whose argument is data.
-_DESTINATION_OPTIONS = {"read": "a", "printf": "v", "wait": "p", "mapfile": "", "readarray": "", "getopts": ""}
-_DESTINATION_OPERANDS = {"read": "all", "printf": None, "wait": None, "mapfile": 0, "readarray": 0, "getopts": 1}
-_DATA_OPTIONS = {"read": "dinNptu", "printf": "", "wait": "", "mapfile": "dnOsuCc", "readarray": "dnOsuCc", "getopts": ""}
-
-
-def _destinations(head: str, words: list[tuple[str, bool]]) -> tuple[set[str], bool]:
-    """The variables a `read`/`printf`/`wait`/`mapfile`/`getopts` call writes, and whether
-    a destination (or an option that could select one) is not literal."""
-    names: set[str] = set()
-    operands: list[tuple[str, bool]] = []
-    by_option = _DESTINATION_OPTIONS[head]
-    takes = by_option + _DATA_OPTIONS[head]
-    i = 0
-    while i < len(words):
-        text, literal = words[i]
-        if operands or text == "-" or not text.startswith("-"):
-            operands.append((text, literal))
-            i += 1
-            continue
-        if text == "--":
-            operands.extend(words[i + 1 :])
-            break
-        if not literal:
-            return names, True  # `read $opts x`: cannot tell options from names
-        for k, letter in enumerate(text[1:], start=1):
-            if letter not in takes:
-                continue
-            attached = text[k + 1 :]
-            if attached:
-                argument = (attached, True)
-            else:
-                i += 1
-                argument = words[i] if i < len(words) else ("", True)
-            if letter in by_option:
-                if not argument[1]:
-                    return names, True
-                names.add(argument[0])
-            break
-        i += 1
-    where = _DESTINATION_OPERANDS[head]
-    picked = operands if where == "all" else (operands[where : where + 1] if where is not None else [])
-    for text, literal in picked:
-        if not literal:
-            return names, True
-        names.add(text.split("[", 1)[0])
-    return names, False
-
-
-def _default_destination(head: str, operands: list[str]) -> bool:
-    """Whether `read` / `mapfile` writes its default variable: no name operand and, for
-    `read`, no `-a` array. Option arguments (attached or separate) are not names."""
-    takes = _ARGUMENT_OPTIONS[head]
-    i = 0
-    while i < len(operands):
-        word = operands[i]
-        if word == "--":
-            return i + 1 >= len(operands)
-        if not word.startswith("-") or word == "-":
-            return False  # a name operand
-        for k, letter in enumerate(word[1:]):
-            if letter in takes:
-                if head == "read" and letter == "a":
-                    return False  # `read -a arr` writes arr
-                if k == len(word) - 2:
-                    i += 1  # the argument is the next word
-                break
-        i += 1
-    return True
-# A write inside these operators may be skipped (`((0 && (x=1)))`).
-_CONDITIONAL_ARITHMETIC = re.compile(r"&&|\|\||\?")
+def _integer_names(words: list[tuple[str, bool]]) -> set[str]:
+    """The names a `declare`/`typeset`/`local` gives the integer attribute (`-i`)."""
+    texts = [t for t, _ in words]
+    options = "".join(w[1:] for w in texts if w.startswith("-"))
+    if "i" not in options:
+        return set()
+    return {w.split("=", 1)[0].split("[", 1)[0] for w in texts if not w.startswith(("-", "+"))}
 
 
 def _unproven_arithmetic(root: tree_sitter.Node) -> bool:
-    reads: list[tuple[str, int]] = []  # (arithmetic text, where it is read)
-    writes: dict[str, list[tuple[bool, int, tuple[int, int] | None]]] = {}
-    other_writes: set[str] = set()  # written in a way that proves no number
-    integers: set[str] = set()  # declared -i anywhere: their assignments are arithmetic
-    # name -> where an unconditional `declare -i` / `declare -A` of it has finished
-    integer_at: dict[str, list[int]] = {}
-    associative_at: dict[str, list[int]] = {}
-    opaque = False  # the line may write variables the walker cannot see
-
-    def declared(table: dict[str, list[int]], name: str, at: int) -> bool:
-        return any(end <= at for end in table.get(name, []))
-
-    def write(name: str, numeric: bool, end: int, unconditional: bool, scope=None) -> None:
-        if not numeric:
-            other_writes.add(name)
-        elif unconditional:
-            writes.setdefault(name, []).append((numeric, end, scope))
-
-    def arithmetic(text: str, node: tree_sitter.Node, scope=None) -> None:
-        reads.append((text, node.start_byte))
-        top = _unconditional(node) or scope is not None
-        # `((0 && (x=1)))`: a write behind &&, || or ?: may not run, so it proves nothing.
-        top = top and not _CONDITIONAL_ARITHMETIC.search(text)
-        for m in _ARITHMETIC_WRITE.finditer(text):
-            write(m.group(1) or m.group(2), True, node.end_byte, top, scope)
-
-    def declaration(words: list[tuple[str, bool]], node: tree_sitter.Node) -> None:
-        nonlocal opaque
-        for text, literal in words:
-            # A non-literal option or name hides what it declares (`declare "$n"=x`,
-            # `declare $opts x`); a non-literal value does not (`export PATH="$PATH:/x"`).
-            if not literal and not _STATIC_NAME.match(text):
-                opaque = True
-        texts = [t for t, _ in words]
-        options = "".join(w[1:] for w in texts if w.startswith("-"))
-        names = [w.split("=", 1)[0].split("[", 1)[0] for w in texts if not w.startswith(("-", "+"))]
-        # An attribute counts from where the declaration has run, unconditionally.
-        end = node.end_byte if _unconditional(node) else None
-        for letter, table in (("i", integer_at), ("A", associative_at)):
-            if letter in options:
-                for name in names:
-                    if letter == "i":
-                        integers.add(name)
-                    if end is not None:
-                        table.setdefault(name, []).append(end)
-
+    texts: list[str] = []
     nodes = list(_iter_nodes(root))
-    for node in nodes:  # first pass: what the declarations say
+    integers: set[str] = set()  # declared -i anywhere: their assignments are arithmetic
+    for node in nodes:
         if node.type == "declaration_command":
-            declaration(_lexed(node), node)  # the keyword is not a named child
+            integers |= _integer_names(_lexed(node))  # the keyword is not a named child
         elif node.type == "command":
-            lexed = _lexed(node)
-            i = _lexed_head(node)
+            lexed, i = _lexed(node), _lexed_head(node)
             if i is not None and i != UNREADABLE and lexed[i][0] in _INTEGER_DECLARERS:
-                declaration(lexed[i + 1 :], node)
+                integers |= _integer_names(lexed[i + 1 :])
     for node in nodes:
         kind = node.type
         if kind == "arithmetic_expansion":
-            arithmetic(" ".join(_node_text(c) for c in node.named_children), node)
+            texts.append(" ".join(_node_text(c) for c in node.named_children))
         elif kind == "compound_statement" and node.text.startswith(b"(("):
-            arithmetic(_node_text(node)[2:-2], node)
+            texts.append(_node_text(node)[2:-2])
         elif kind == "c_style_for_statement":
-            scope = (node.start_byte, node.end_byte)
             for field_name in ("initializer", "condition", "update"):
-                for part in node.children_by_field_name(field_name):
-                    arithmetic(_node_text(part), part, scope)
+                texts += [_node_text(part) for part in node.children_by_field_name(field_name)]
         elif kind == "binary_expression" and _in_double_bracket(node) and any(
             c.type == "test_operator" and _node_text(c) in _ARITHMETIC_TESTS for c in node.children
         ):
             for side in ("left", "right"):
                 operand = node.child_by_field_name(side)
                 if operand is not None:
-                    arithmetic(lex_word(_node_text(operand))[0], operand)
+                    texts.append(lex_word(_node_text(operand))[0])
         elif kind == "subscript":
-            name = node.child_by_field_name("name")
             index = node.child_by_field_name("index")
-            if index is None:
-                continue
-            if name is not None and declared(associative_at, _node_text(name), node.start_byte):
-                continue  # an associative key, once `declare -A` has run: not arithmetic
-            text = lex_word(_node_text(index))[0]
-            if text not in ("@", "*"):
-                arithmetic(text, index)
+            if index is not None:
+                text = lex_word(_node_text(index))[0]
+                if text not in ("@", "*"):
+                    texts.append(text)
         elif kind == "expansion":
             match = _SUBSTRING.match(_node_text(node))
             if match:
-                arithmetic(match.group(1), node)
+                texts.append(match.group(1))
         elif kind == "variable_assignment":
             name_node = node.child_by_field_name("name")
             value_node = node.child_by_field_name("value")
-            if name_node is None:
-                continue
-            element = name_node.type == "subscript"
-            if element:
-                inner = name_node.child_by_field_name("name")
-                name_node = inner if inner is not None else name_node
-            name = _node_text(name_node)
-            value = lex_word(_node_text(value_node))[0] if value_node is not None else ""
-            if node.parent is not None and node.parent.type == "command":
-                continue  # `x=1 cmd`: set for that command only, not in the shell
-            if name in integers:
-                arithmetic(value, value_node or node)
-            numeric = (
-                value == ""
-                or bool(_NUMERIC_VALUE.fullmatch(value))
-                or declared(integer_at, name, node.start_byte)
-            )
-            if element:
-                # `x[1]=1` leaves element 0, which `$((x))` reads: it proves nothing about
-                # x, and a non-number in any element makes x unproven.
-                if not numeric:
-                    other_writes.add(name)
-                continue
-            write(name, numeric, node.end_byte, _unconditional(node))
-        elif kind == "for_statement":
-            variable = node.child_by_field_name("variable")
-            if variable is not None:
-                other_writes.add(_node_text(variable))
-            if node.text.startswith(b"select"):
-                other_writes.add("REPLY")  # `select` also stores the line read in REPLY
+            if name_node is not None and name_node.type == "subscript":
+                name_node = name_node.child_by_field_name("name") or name_node
+            if name_node is not None and _node_text(name_node) in integers and value_node is not None:
+                texts.append(lex_word(_node_text(value_node))[0])
         elif kind == "unset_command":
             for child in node.named_children:
-                text = lex_word(_node_text(child))[0]
-                base, _, rest = text.partition("[")
-                assoc = declared(associative_at, base, node.start_byte)
-                if rest.endswith("]") and not assoc and rest[:-1] not in ("@", "*"):
-                    arithmetic(rest[:-1], child)
+                _, _, tail = lex_word(_node_text(child))[0].partition("[")
+                if tail.endswith("]") and tail[:-1] not in ("@", "*"):
+                    texts.append(tail[:-1])
         elif kind == "command":
-            lexed = _lexed(node)
-            words = [t for t, _ in lexed]
-            i = _lexed_head(node)
-            if i == UNREADABLE:
-                opaque = True  # `command "$o" …`: what runs is not known
+            lexed, i = _lexed(node), _lexed_head(node)
+            if i is None or i == UNREADABLE:
                 continue
-            if i is None:
-                continue  # no command word, or `command -v`: nothing runs
-            head, rest = words[i], words[i + 1 :]
-            if not lexed[i][1] or head in SHELL_RUNNERS or head in CODE_LATER:
-                # `eval 'x=…'`, `source f`, `$cmd`, an alias: may write any variable.
-                opaque = True
-            if head in _VARIABLE_WRITERS:
-                destinations, dynamic = _destinations(head, lexed[i + 1 :])
-                other_writes.update(destinations)
-                if dynamic:
-                    opaque = True  # `read "$v"`: writes a variable the walker cannot name
-            if head in _IMPLICIT_WRITES and _default_destination(head, rest):
-                other_writes.update(_IMPLICIT_WRITES[head])
-            if head == "getopts":
-                other_writes.add("OPTARG")
+            head, rest = lexed[i][0], [t for t, _ in lexed[i + 1 :]]
             if head == "let":
-                for word in rest:
-                    arithmetic(word, node)
+                texts += rest
             elif head == "unset":
                 for word in rest:
-                    base, _, tail = word.partition("[")
-                    assoc = declared(associative_at, base, node.start_byte)
-                    if tail.endswith("]") and not assoc and tail[:-1] not in ("@", "*"):
-                        arithmetic(tail[:-1], node)
+                    _, _, tail = word.partition("[")
+                    if tail.endswith("]") and tail[:-1] not in ("@", "*"):
+                        texts.append(tail[:-1])
             elif head in _INTEGER_DECLARERS:
                 for word in rest:
                     name, eq, value = word.partition("=")
-                    if not eq:
-                        continue
-                    base = name.split("[", 1)[0]
-                    if base in integers:
-                        arithmetic(value, node)
-                    numeric = (
-                        value == ""
-                        or bool(_NUMERIC_VALUE.fullmatch(value))
-                        or declared(integer_at, base, node.start_byte)
-                    )
-                    if "[" in name:
-                        # An element write proves nothing about the variable (see above).
-                        if not numeric:
-                            other_writes.add(base)
-                        continue
-                    write(base, numeric, node.end_byte, _unconditional(node))
-
-    def proven(name: str, at: int) -> bool:
-        if name in _SAFE_NUMERIC:
-            return True
-        if opaque or name in other_writes:
-            return False
-        return any(
-            end <= at and (scope is None or scope[0] <= at < scope[1])
-            for _, end, scope in writes.get(name, [])
-        )
-
-    for text, at in reads:
-        names, from_runtime = _arithmetic_names(text)
-        if from_runtime or not all(proven(name, at) for name in names):
-            return True
-    return False
+                    if eq and name.split("[", 1)[0] in integers:
+                        texts.append(value)
+    return any(_unproven(text) for text in texts)
 

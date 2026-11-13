@@ -487,6 +487,10 @@ def test_a_list_redirect_belongs_to_its_last_command():
 def test_time_is_looked_through():
     walked = bashwalker.walk("time -p git push origin main")
     assert bashwalker.command_head(walked.invocations[0]).text == "git"
+    # Only as the first, unquoted word: after `command`/`builtin` it is the program.
+    for command in ("command time git push", "builtin time git push", '"time" git push'):
+        head = bashwalker.command_head(bashwalker.walk(command).invocations[0])
+        assert head.text != "git", command
 
 
 def test_function_redirects_run_at_call_time():
@@ -554,6 +558,9 @@ ARITHMETIC_SINKS = [
     "v=x; x=1; read \"$v\"; echo $((x))",
     "y=$X; declare -i y; echo $((y))",
     "p=1 command -v declare -A m >/dev/null; echo ${m[X]}",
+    "builtin time declare -A m; echo ${m[X]}",
+    "command time declare -A m 2>/dev/null; echo ${m[X]}",
+    "p=1 builtin declare 'x[1]=1'; echo $((x))",
 ]
 
 

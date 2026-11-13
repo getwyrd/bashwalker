@@ -1454,7 +1454,13 @@ def _skip_prefixes(words: list[Word]) -> int | None:
     when a prefix has an option the walker cannot read (``command "-$o" exec <x`` may run
     ``exec``)."""
     i = 0
-    while i < len(words) and words[i].literal and words[i].text in (*BUILTIN_PREFIXES, "time"):
+    # `time` is a reserved word only as the first word, unquoted; after `command` or
+    # `builtin` it is the external program, which runs what follows in a child process.
+    if words and words[0].source == "time":
+        i = 1
+        while i < len(words) and words[i].literal and words[i].text == "-p":
+            i += 1
+    while i < len(words) and words[i].literal and words[i].text in BUILTIN_PREFIXES:
         prefix = words[i].text
         i += 1
         while i < len(words) and words[i].text.startswith("-"):
@@ -1627,11 +1633,16 @@ def _lexed(node: tree_sitter.Node) -> list[tuple[str, bool]]:
     return out
 
 
-def _lexed_head(lexed: list[tuple[str, bool]]) -> int | None:
-    """``_skip_prefixes`` for lexed words: the index of the word that runs, None when
-    nothing runs (no word, or `command -v`/`-V`), ``UNREADABLE`` when a prefix option
-    cannot be read."""
-    words = [Word(text=t, literal=lit, source=t) for t, lit in lexed]
+def _lexed_head(node: tree_sitter.Node) -> int | None:
+    """``_skip_prefixes`` for a command node's words (as ``_lexed`` lists them): the index
+    of the word that runs, None when nothing runs (no word, or `command -v`/`-V`),
+    ``UNREADABLE`` when a prefix option cannot be read."""
+    words = [
+        make_word(_node_text(c))
+        for c in node.named_children
+        if not c.type.endswith("_redirect")
+        and not (c.type == "variable_assignment" and node.type == "command")
+    ]
     i = _skip_prefixes(words)
     if i is None or i == UNREADABLE:
         return i
@@ -1695,8 +1706,8 @@ def _unproven_arithmetic(root: tree_sitter.Node) -> bool:
             declaration(_lexed(node), node)  # the keyword is not a named child
         elif node.type == "command":
             lexed = _lexed(node)
-            i = _lexed_head(lexed)
-            if i is not None and lexed[i][0] in _INTEGER_DECLARERS:
+            i = _lexed_head(node)
+            if i is not None and i != UNREADABLE and lexed[i][0] in _INTEGER_DECLARERS:
                 declaration(lexed[i + 1 :], node)
     for node in nodes:
         kind = node.type
@@ -1773,7 +1784,7 @@ def _unproven_arithmetic(root: tree_sitter.Node) -> bool:
         elif kind == "command":
             lexed = _lexed(node)
             words = [t for t, _ in lexed]
-            i = _lexed_head(lexed)
+            i = _lexed_head(node)
             if i == UNREADABLE:
                 opaque = True  # `command "$o" …`: what runs is not known
                 continue
@@ -1816,6 +1827,11 @@ def _unproven_arithmetic(root: tree_sitter.Node) -> bool:
                         or bool(_NUMERIC_VALUE.fullmatch(value))
                         or declared(integer_at, base, node.start_byte)
                     )
+                    if "[" in name:
+                        # An element write proves nothing about the variable (see above).
+                        if not numeric:
+                            other_writes.add(base)
+                        continue
                     write(base, numeric, node.end_byte, _unconditional(node))
 
     def proven(name: str, at: int) -> bool:

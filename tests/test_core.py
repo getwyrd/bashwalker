@@ -185,8 +185,8 @@ def test_rule1_quoted_text_is_trusted():
         "echo ${a[0]} ${a[@]} ${#a[*]}",
         "grep 'a[bc]' f; awk '{c[$1]++}'; sed -n 's/[$]//p' f",
         "[[ $x =~ ^a[0-9]+$ ]]",
-        "declare -A m; m['key']=1; a[1]=2; m[\"$k\"]=3; printf '%s\\n' $'a[\\t]'",
-        "echo $(( 1 + 2 )) $(( 2 * ${#y} ))",
+        "a[1]=2; printf '%s\\n' $'a[\\t]'",
+        "echo $(( 1 + 2 )) $(( 2 * 3 ))",
         "echo \"$PS1\" ${PS4:-x}; MYPS4=1",
         "x=$(date); y=\"$(id -u)\"; z=`pwd`; w=${HOME}",
         "x=$HOME; y=\"$x/b\"; z=\"${a[0]}$1$@$?\"",
@@ -487,6 +487,22 @@ def test_a_list_redirect_belongs_to_its_last_command():
 def test_time_is_looked_through():
     walked = bashwalker.walk("time -p git push origin main")
     assert bashwalker.command_head(walked.invocations[0]).text == "git"
+    walked = bashwalker.walk("time time -p -- git push")
+    assert bashwalker.command_head(walked.invocations[0]).text == "git"
+    # Prefix assignments may follow the reserved word (bash 5.3 runs `git` here).
+    walked = bashwalker.walk("time GIT_DIR=x A=$y git push")
+    assert bashwalker.command_head(walked.invocations[0]).text == "git"
+    # The grammar parses those assignments as words, so they are in no Assignment.
+    assert any("assignment after time" in f for f in walked.untrusted)
+    assert stdin_of("time time exec 0<<<'echo X'; bash")["bash"][0] == "unknown"
+    # Only as the first, unquoted word: after `command`/`builtin` it is the program.
+    # Its options too: `time "-p" git push` runs `-p` (bash 5.3).
+    for command in (
+        "command time git push", "builtin time git push", '"time" git push', 'time "-p" git push',
+        "time \\-- git push", "time -p -p git push", "X=1 time git push", ">/dev/null time git push",
+    ):
+        head = bashwalker.command_head(bashwalker.walk(command).invocations[0])
+        assert head.text != "git", command
 
 
 def test_function_redirects_run_at_call_time():
@@ -541,15 +557,176 @@ ARITHMETIC_SINKS = [
     "x=$((x+1))",
     "read x <<<\"$X\"; echo $((x))",
     "while ((i < 3)); do ((i++)); done",
+    # #12: writes that may not run, or do not cover what is read.
+    "((0 && (x=1))); echo $((x))",
+    "((1 || (x=1))); echo $((x))",
+    "((0 ? x=1 : 0)); echo $((x))",
+    "x[1]=1; echo $((x))",
+    "echo ${m[X]}; declare -A m",
+    "false && declare -A m; echo ${m[X]}",
+    "REPLY=1; read; echo $((REPLY))",
+    "MAPFILE=1; mapfile; echo $((MAPFILE))",
+    "x=1; eval 'x=$X'; echo $((x))",
+    "v=x; x=1; read \"$v\"; echo $((x))",
+    "y=$X; declare -i y; echo $((y))",
+    "p=1 command -v declare -A m >/dev/null; echo ${m[X]}",
+    "builtin time declare -A m; echo ${m[X]}",
+    "command time declare -A m 2>/dev/null; echo ${m[X]}",
+    "p=1 builtin declare 'x[1]=1'; echo $((x))",
+    "x=1; time -- eval 'x=$X'; echo $((x))",
+    # Ways a variable set in the line changes before it is read (local review of #13).
+    "x=1; mapfile -C 'x=$X; :' -c 1 a <<<z; echo $((x))",
+    "declare -A m; unset m; m[X]=1",
+    "BASH_REMATCH=1; [[ $X =~ (.*) ]]; echo $((BASH_REMATCH))",
+    "set -o posix; x=1; x=$X export y; echo $((x))",
+    "f() { x=$X; }; x=1; f; echo $((x))",
+    "option=-v; x=1; printf \"$option\" x %s \"$X\"; echo $((x))",
+    # Fourth local review of #13.
+    "unset RANDOM; RANDOM=$1; echo $((RANDOM))",
+    "opt=-i; declare \"$opt\" x; x=$X",
+    "declare -i x; read x",
+    "declare -i x; printf -v x %s \"$X\"",
+    "declare -i x; for x in \"$X\"; do :; done",
+    "read 'a[x]' <<<z",
+    "printf -v 'a[x]' %s z",
+    "test -v 'a[x]'",
+    "[ -v 'a[x]' ]",
+    "[[ -v a[x] ]]",
+    "s=t; t=abc; echo \"${!s:x}\"",
+    "set -- a b; echo \"${@:x}\"",
+    # Fifth local review of #13.
+    'read "$1" <<<yes',
+    "printf '%s\\n' \"${-:x}\"",
+    'declare -i n; name=n; value=X; export "$name=$value"',
+    'unset "$2"; printf -v "$2" %s "$X"; echo "$((RANDOM))"',
+    'hBc=$X; echo "$(( $- ))"',
+    "declare -i x; x=1; read x",
+    # Sixth local review of #13.
+    'name=$1; test -v "$name"',
+    'name=$1; [[ -v $name ]]',
+    'name=$1; echo "${!name}"',
+    "echo $(( ${!#} ))",
+    "RANDOM=$1",
+    "OPTIND=$1",
+    "declare -i REPLY; read",
+    "declare -i MAPFILE; mapfile",
+    # Seventh local review of #13.
+    "eval 'unset OPTIND; OPTIND=$X'; echo $((OPTIND))",
+    # Eighth local review of #13.
+    "command export OPTIND=$X",
+    "\"export\" OPTIND=$X",
+    "mapfile -C 'unset OPTIND; OPTIND=$X; :' -c 1 a <<<z; echo $((OPTIND))",
+    'name=OPTIND; export "$name=$X"',
+    "declare -i 'n=X'",
+    "read 'a[OPTIND[0]-1+X]' <<<z",
+    'a[0]=abc; echo "${a[OPTIND[0]-1]:X}"',
+    # Ninth local review of #13.
+    "a=$X; getopts -- ab OPTIND -a",
+    "op=-v; test \"$op\" 'a[X]'",
+    # Tenth local review of #13.
+    'command export "OPTIND+=$X"',
+    "read -r X; a=([X]=1)",
+    "a+=([$X]=1)",
+    "declare -a a=([X]=1)",
+    # Eleventh local review of #13.
+    "X=$1; printf -v a[X] %s z",
+    "X=$1; command test -v a[X]",
+    "a=([b[0]+$1]=1)",
+    "dash=--; getopts \"$dash\" X RANDOM -X",
+    # Twelfth local review of #13.
+    'V="([X]=1)"; declare -a "a=$V"',
+    'V="([X]=1)"; b=(); declare "b=$V"',
+    'V="([X]=1)"; b=(); typeset b+="$V"',
+    'V="([X]=1)"; export -a "a=$V"',
+    'declare -a "a=([X]=$1)"',
+    'x=-; declare -"$x" -p "OPTIND=$X"',
+    'OP="-v a[X]"; test $OP',
+    "X=$1; : {a[X]}>/dev/null",
+    "a=([${X:-1]ignored}]=v)",
+    'a=(["X"]=1)',
+    "k=X; a=([$k]=1)",
+    'opt=p; command -"$opt" let X',
+    # Thirteenth local review of #13.
+    "declare -a 'a=([X]=1)'",
+    "b=(); declare 'b=([X]=1)'",
+    "HOME='([X]=1)'; declare -a a=~",
+    "declare x {a[X]}>/dev/null",
+    "unset y {a[X]}>/dev/null",
+    "[[ 1 ]] {a[X]}>/dev/null",
+    ": {a[b[X]]}>/dev/null",
+    "a=([ X ]=1)",
+    # Fourteenth local review of #13.
+    "HOME=X; let ~",
+    "HOME=X; [[ ~ -eq 0 ]]",
+    "test {-v,a[X]}",
+    'set -- -v "a[X]"; test "$@"',
+    # Fifteenth local review of #13.
+    "let >/dev/null X",
+    "declare >/dev/null -i x=X",
+    "read </dev/null RANDOM <<<X",
+    "test >/dev/null -v a[X]",
+    "command >/dev/null let X",
+    # Sixteenth local review of #13.
+    'OP="-v a[X]"; [ $OP ]',
+    "true && let >/dev/null X",
+    ": | let >/dev/null X",
+    # Eighteenth local review of #13.
+    "OPT\\\nIND=$X",
+    # Nineteenth local review of #13.
+    's=IND; export OPT"$s"="$X"',
+    # Twentieth local review of #13.
+    'time D=1 export OPTIND="$X"',
+    # Twenty-first local review of #13.
+    "time ((X))",
+    "! ((X))",
+    "coproc ((X)); wait",
+    "time [[ X -eq 0 ]]",
+    "time RANDOM=$X",
+    "coproc let X; wait",
+    # Twenty-third local review of #13.
+    "cat <<EOF\n$((X))\nEOF",
+    # Twenty-fourth local review of #13.
+    "time [[ -v a[X] ]]",
+    "time [[ 1 && X -eq 0 ]]",
+    # Twenty-fifth local review of #13.
+    "time coproc let X; wait",
+    'a=(-v "b[X]"); test "${a[@]:0}"',
+
+    "REPLY=1; read -p x; echo $((REPLY))",
+    "REPLY=1; read -r -t 1 -d '' ; echo $((REPLY))",
+    "v=x; x=1; mapfile -t \"$v\"; echo $((x))",
+    "x=1; read -ra x; echo $((x))",
 ]
 
 
-# Safe in bash, flagged anyway: a write in a function, or by `printf`/`read`/`for`, is not
-# proven to give a number, so the variable stays unproven (fail closed).
+# Safe in bash, flagged anyway: no variable is proven a number, not even one set earlier in
+# the line, because any command in between may change it (a function from the session,
+# `eval`, `cd`, `unset`); associative keys count as arithmetic too (fail closed).
 ARITHMETIC_UNPROVEN = [
+    # Ultra-strict (#12): any name or `$` in arithmetic, bash's numeric variables too.
+    "echo $((RANDOM % 6)) $((SECONDS + LINENO)) $(($# + $?))",
+    "echo $(( 2 * ${#y} ))",
+    # `:=` assigns to an integer variable; it runs in an interactive bash 5.3 started with
+    # MAILCHECK set and empty (the probe's non-interactive bash has no MAILCHECK).
+    ': "${MAILCHECK:=$X}"',
+    ': "${OPTIND=$X}"',
+    # A translated index: a message catalog may turn `$"1"` into a name.
+    ': "${a[$"1"]}"',
+    "((x = 1))",
+    "declare -i y=5",
+    "RANDOM=1",
+    "for ((i=0; i<3; i++)); do echo $i; done",
+    "n=5; echo $((n * 2))",
+    "i=0; while ((i < 3)); do ((i++)); done",
+    "x=$((2 + 3)); echo $((x))",
+    "declare -A m; echo ${m[key]} ${m[$k]}",
+    "export PATH=\"$PATH:/x\"; y=1; echo $((y))",
+    "echo $((x=1, x))",
     "f() { x=1; }; f; echo $((x))",
     "printf -vx %s 1; echo $((x))",
     "for x in 1; do :; done; echo $((x))",
+    "v=x; x=1; printf -v \"$v\" %s 1; echo $((x))",
+    "x=1; getopts ab x; echo $((x))",
 ]
 
 
@@ -558,20 +735,24 @@ def test_arithmetic_on_unproven_values_is_untrusted(command):
     assert any("arithmetic" in f for f in bashwalker.walk(command).untrusted), command
 
 
-def test_arithmetic_on_proven_numbers_is_trusted():
+def test_glob_destination_is_untrusted():
+    # bash 5.3, with a file named a[$(>pw)] in the directory: `read a*` reads into it.
+    assert any("arithmetic" in f for f in bashwalker.walk("read a* <<<z").untrusted)
+
+
+def test_arithmetic_on_literal_numbers_is_trusted():
     for command in (
-        "echo $((1 + 2)) $[3] $((0x1f + 16#ff + 2#101))",
-        "for ((i=0; i<3; i++)); do echo $i; done",
-        "n=5; echo $((n * 2))",
-        "i=0; while ((i < 3)); do ((i++)); done",
-        "((i = 0)); echo $((i + 1))",
-        "echo $((RANDOM % 6)) $((SECONDS + LINENO)) $(($# + $?))",
-        "a=(1 2); echo ${a[0]} ${a[@]} ${#a[*]} ${a[1]}",
-        "declare -A m; m[key]=1; echo ${m[key]} ${m[$k]}",
-        "s=abc; echo ${s:1:2} ${s: -1} ${x:-d} ${x:=d}",
-        "[ \"$X\" -eq 0 ]; test \"$X\" -eq 0",
-        "declare -i y=5; y=6",
-        "x=$((2 + 3)); echo $((x))",
+        "echo $((1 + 2)) $[3] $((0x1f + 16#ff + 2#101)) $(( (4 << 1) % 3 ))",
+        "for ((;;)); do break; done; ((1))",
+        "a=(1 2); echo ${a[0]} ${a[@]} ${#a[*]} ${a[1]} ${a[1+1]}",
+        "s=abc; echo ${s:1:2} ${s: -1} ${x:-d} ${x:=d} ${#s} ${x/a/b} ${x#a}",
+        "[ \"$X\" -eq 0 ]; test \"$X\" -eq 0; [[ 1 -eq 1 ]]",
+        "REPLY=1; read x <<<foo; printf -v y %s z; read 'a[0]' <<<z",
+        "declare -p \"$name\"; typeset -f f; export A=1 PATH=\"$PATH:/x\"",
+        "unset a[0] x; test -v x; [[ -v a[1] ]]",
+        'test "$x" = y; [ -n "$x" ]; read a[0] <<<z',
+        "~/bin/tool x; $'\\x72m' -f y",
+        "declare +i x; a=(1 2 [3]=4); a+=([5]=6)",
     ):
         walked = bashwalker.walk(command)
         assert not any("arithmetic" in f for f in walked.untrusted), (command, walked.untrusted)

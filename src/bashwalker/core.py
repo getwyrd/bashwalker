@@ -182,6 +182,9 @@ class Invocation:
     redirects: tuple[Redirect, ...]
     stdin: Stdin
     in_function: bool
+    # False when an assignment or redirect comes before the first word: a leading `time`
+    # is then the external program, not bash's reserved word (`X=1 time export Y=z`).
+    time_reserved: bool = True
 
     @property
     def command_word(self) -> Word | None:
@@ -989,8 +992,10 @@ def _simple(walker: Walker, node, ctx: Ctx, depth: int, bound: tuple = ()) -> No
     # `command export 'PATH=x'`, `"export" 'PATH=x'` and `builtin unset …` are the
     # builtins themselves, which the grammar parses as an ordinary command: look through
     # the prefixes and the quoting.
-    head = _builtin_head(words) if kind == "command" else None
-    if kind == "command" and _skip_prefixes(words) == UNREADABLE:
+    head = _builtin_head(words, _time_reserved(node)) if kind == "command" else None
+    if kind == "command" and _assigns_after_time(words, _time_reserved(node)):
+        walker.note_untrusted("assignment after time, which the walker does not record")
+    if kind == "command" and _skip_prefixes(words, _time_reserved(node)) == UNREADABLE:
         walker.note_untrusted("command or builtin prefix with an option the walker cannot read")
     declarer = 0 if kind == "declaration" else head
     display_only = declarer is not None and _displays_only(words, declarer)
@@ -1042,6 +1047,7 @@ def _simple(walker: Walker, node, ctx: Ctx, depth: int, bound: tuple = ()) -> No
             redirects=tuple(records),
             stdin=stdin,
             in_function=ctx.in_function,
+            time_reserved=_time_reserved(node),
         )
     )
 
@@ -1387,7 +1393,9 @@ def walk(source: str, limits: Limits = DEFAULT_LIMITS) -> Walk:
     walker = Walker(data, layer, limits)
     walker.visit(tree.root_node, Ctx(stdin=TERMINAL), 0)
     _check_walk(tree, walker)
-    if _unproven_arithmetic(tree.root_node):
+    # A line continuation outside single quotes (`OPT\<newline>IND=$X`): bash joins the
+    # pieces into a name the arithmetic checks would match, so they cannot rule it out.
+    if "backslash-newline" in layer.untrusted or _unproven_arithmetic(tree.root_node):
         walker.note_untrusted("arithmetic on a value the walker cannot prove is a number")
     if any(_holds_substitution_text(a.value) for a in layer.assignments):
         # A quoted value that spells a substitution: bash may evaluate it later, also
@@ -1434,10 +1442,10 @@ _NAMES_CODE_VARIABLE = re.compile(
 )
 
 
-def _builtin_head(words: list[Word]) -> int | None:
+def _builtin_head(words: list[Word], time_reserved: bool = True) -> int | None:
     """The index of the literal word bash runs as the command, after any ``command`` /
     ``builtin`` prefixes and their options; None when that word is not literal."""
-    i = _skip_prefixes(words)
+    i = _skip_prefixes(words, time_reserved)
     if i is None or i == UNREADABLE or i >= len(words) or not words[i].literal:
         return None
     if not words[i].source:
@@ -1448,13 +1456,60 @@ def _builtin_head(words: list[Word]) -> int | None:
 UNREADABLE = -1
 
 
-def _skip_prefixes(words: list[Word]) -> int | None:
+_ASSIGNMENT_WORD = re.compile(r"[A-Za-z_]\w*(?:\[[^\]]*\])?\+?=")
+
+
+def _assigns_after_time(words: list[Word], time_reserved: bool) -> bool:
+    """Whether an assignment follows the reserved `time` (`time PATH=/tmp git`): the
+    grammar parses it as a word, so it is in no ``Assignment``."""
+    i = 0
+    while time_reserved and i < len(words) and words[i].source == "time":
+        i += 1
+        if i < len(words) and words[i].source == "-p":
+            i += 1
+        if i < len(words) and words[i].source == "--":
+            i += 1
+        if i < len(words) and _ASSIGNMENT_WORD.match(words[i].source):
+            return True
+    return False
+
+
+def _time_reserved(node: tree_sitter.Node) -> bool:
+    """Whether a leading `time` in this command node is bash's reserved word: only when
+    nothing (an assignment, a redirect) comes before it."""
+    for child in node.children:
+        if child.type == "variable_assignment" or child.type in REDIRECT_KINDS:
+            return False
+        if child.type in ("command_name", "word"):
+            return True
+    return True
+
+
+def _skip_prefixes(words: list[Word], time_reserved: bool = True) -> int | None:
     """The index after any ``command`` / ``builtin`` prefixes and their options; None when
     a prefix only looks a command up (``command -v``/``-V`` runs nothing); ``UNREADABLE``
     when a prefix has an option the walker cannot read (``command "-$o" exec <x`` may run
     ``exec``)."""
     i = 0
-    while i < len(words) and words[i].literal and words[i].text in (*BUILTIN_PREFIXES, "time"):
+    # `time` is a reserved word only as the first word, unquoted; after `command` or
+    # `builtin` it is the external program, which runs what follows in a child process.
+    while (
+        time_reserved
+        and i < len(words)
+        and words[i].source == "time"
+        and all(w.source in ("time", "-p", "--") for w in words[:i])
+    ):
+        i += 1  # `time time exec …`: each leading `time` is the reserved word
+        # Its option is a word as written, once: `time "-p" git` and `time -p -p git` run `-p`.
+        if i < len(words) and words[i].source == "-p":
+            i += 1
+        if i < len(words) and words[i].source == "--":
+            i += 1  # `time -- eval …`
+        # Assignments may follow, before the command (`time X=1 export …`); the grammar
+        # parses them as words.
+        while i < len(words) and _ASSIGNMENT_WORD.match(words[i].source):
+            i += 1
+    while i < len(words) and words[i].literal and words[i].text in BUILTIN_PREFIXES:
         prefix = words[i].text
         i += 1
         while i < len(words) and words[i].text.startswith("-"):
@@ -1474,7 +1529,7 @@ def command_head(invocation: Invocation) -> Word | None:
     """The command word, with ``command`` and ``builtin`` in front looked through; None
     when there is no command word."""
     words = list(invocation.words)
-    i = _skip_prefixes(words)
+    i = _skip_prefixes(words, invocation.time_reserved)
     if i == UNREADABLE:
         # An option the walker cannot read: what runs is not known, so the head is that
         # non-literal word, which callers treat as the worst case.
@@ -1524,81 +1579,157 @@ def may_rewire_stdin(invocation: Invocation) -> bool:
 #
 # bash evaluates some values as arithmetic, and an array subscript in such a value runs
 # its command substitutions: with X='a[$(id)]' in the environment, `echo $((X))` runs
-# `id`. A value written in the line is already flagged (``_holds_substitution_text``);
-# one that exists only at run time (the environment, `read`, a command's output, an
-# argument) is not visible, so any arithmetic read the walker cannot prove to be a number
-# makes the tree untrusted. Checked against bash 5.3, these contexts evaluate a value:
-# `$(( ))`, `$[ ]`, `(( ))`, `for (( ))`, `let`, the numeric tests of `[[ ]]`, indexed
-# subscripts (`${a[i]}`, `a[i]=`, `unset a[i]`), `${s:off:len}`, and assignments to a
-# variable declared `-i` in the line. `[ ]`, `test`, `printf %d`, `shift`, `exit`,
-# `return` and associative keys do not.
+# `id`. Checked against bash 5.3, these evaluate a value as arithmetic: `$(( ))`, `$[ ]`,
+# `(( ))`, `for (( ))`, `let`, the numeric tests of `[[ ]]`, array subscripts (also in
+# names given to builtins and `-v` tests), `${…:off:len}`, and assignments to an integer
+# variable: one declared `-i`, or one of bash's own (`RANDOM`, `OPTIND`, …).
+#
+# The rule is ultra-strict (decided on #12 after eight review rounds kept finding ways
+# around narrower ones): arithmetic is trusted only when it is literal numbers. Any name,
+# `$` or backtick in an arithmetic text or an array index, any `-i` declaration, any write
+# to one of bash's integer variables, any declaration or destination whose name the
+# walker cannot read, and any indirect `${!name}` make the tree untrusted.
 
-# bash's own numeric variables.
-_SAFE_NUMERIC = frozenset(
-    ("RANDOM", "SRANDOM", "LINENO", "SECONDS", "EPOCHSECONDS", "BASHPID", "PPID", "UID", "EUID")
+# bash's own integer variables: an assignment to one evaluates the value as arithmetic.
+_BASH_INTEGERS = frozenset(
+    ("RANDOM", "SRANDOM", "LINENO", "SECONDS", "EPOCHSECONDS", "BASHPID", "PPID", "UID", "EUID",
+     "BASH_SUBSHELL", "OPTIND", "MAILCHECK", "HISTCMD")
 )
 _INT_CONSTANT = re.compile(r"(?<![\w$])(?:0[xX][0-9A-Fa-f]+|[0-9]+#[0-9A-Za-z@_]+|[0-9]+)(?![\w#])")
-# `$x`, `${x}`, `${!x}` read a value; `${#x}` is a length, always a number.
-_REFERENCE = re.compile(r"\$\{?!?([A-Za-z_][A-Za-z0-9_]*)")
-_LENGTH = re.compile(r"\$\{#[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?\}")
-_POSITIONAL = re.compile(r"\$\{?[#!]?[0-9@*]")
-_COMMAND_OUTPUT = re.compile(r"\$\((?!\()|`")
-_BARE_NAME = re.compile(r"(?<![\w$#])([A-Za-z_][A-Za-z0-9_]*)")
-_ARITHMETIC_WRITE = re.compile(
-    r"(?:\+\+|--)\s*([A-Za-z_]\w*)|([A-Za-z_]\w*)\s*(?:\+\+|--|(?:\*\*|<<|>>|[-+*/%&|^])?=(?!=))"
-)
-_PLAIN_ASSIGNMENT = re.compile(r"(?<![\w$])[A-Za-z_]\w*\s*=(?!=)")
-_NUMERIC_VALUE = re.compile(
-    r"[-+]?[0-9]+|\$\(\(.*\)\)|\$\[.*\]|\(\s*(?:[-+]?[0-9]+\s*)*\)|\$\{?(?:"
-    + "|".join(sorted(_SAFE_NUMERIC))
-    + r")\}?",
-    re.S,
-)
+_PURE_ARITHMETIC = re.compile(r"[\s0-9+\-*/%<>=!&|^~?:,()]*")
 _ARITHMETIC_TESTS = ("-eq", "-ne", "-lt", "-le", "-gt", "-ge")
-_VARIABLE_WRITERS = ("read", "printf", "mapfile", "readarray", "getopts", "wait")
+_DECLARERS = ("declare", "typeset", "local", "export", "readonly")
 _INTEGER_DECLARERS = ("declare", "typeset", "local")
-_SUBSTRING = re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?:(?![-=?+])(.*)\}$", re.S)
-# Containers a write can sit in and still run once, before what follows it.
-_UNCONDITIONAL = frozenset(
-    (
-        "program", "variable_assignment", "variable_assignments", "declaration_command",
-        "command", "redirected_statement", "compound_statement", "arithmetic_expansion",
-        "binary_expression", "unary_expression", "postfix_expression",
-        "parenthesized_expression", "word", "number", "variable_name", "subscript",
-        "concatenation", "string", "expansion", "simple_expansion",
-    )
-)
+# A declaration operand whose name is literal even if its value is not (`PATH="$PATH:/x"`).
+_STATIC_NAME = re.compile(r"[A-Za-z_]\w*(?:\[[^\]]*\])?\+?=")
+# Builtins that write variables they are given.
+_VARIABLE_WRITERS = ("read", "printf", "mapfile", "readarray", "getopts", "wait")
+# `${!x*}`, `${!x@}`, `${!a[@]}`, `${!a[*]}` list names or keys and evaluate nothing.
+_DEFAULT_ASSIGNMENT = re.compile(r"\$\{([A-Za-z_]\w*)(?:\[[^\]]*\])?:?=")
+_INDIRECT_LISTING = re.compile(r"\$\{![A-Za-z_]\w*(?:[*@]|\[[*@]\])\}$")
 
 
 def _node_text(node: tree_sitter.Node) -> str:
     return node.text.decode("utf-8", "replace")
 
 
-def _arithmetic_names(text: str) -> tuple[set[str], bool]:
-    """The variables an arithmetic text reads, and whether it reads a value that is never
-    a proven number (a command's output or an argument)."""
-    text = _LENGTH.sub(" 0 ", text)
-    runtime = bool(_COMMAND_OUTPUT.search(text) or _POSITIONAL.search(text))
-    names = set(_REFERENCE.findall(text))
-    # A plain `name=` only assigns (`name+=` and the like also read).
-    rest = _PLAIN_ASSIGNMENT.sub(" ", _REFERENCE.sub(" ", text))
-    rest = _INT_CONSTANT.sub(" ", rest)
-    names |= set(_BARE_NAME.findall(rest))
-    return names, runtime
+def _pure(text: str) -> bool:
+    """Whether an arithmetic text is literal numbers and operators only."""
+    return bool(_PURE_ARITHMETIC.fullmatch(_INT_CONSTANT.sub(" ", text)))
 
 
-def _unconditional(node: tree_sitter.Node) -> bool:
-    """Whether ``node`` runs exactly once, in the current shell, before anything after it
-    in the line: every container up to the program is one of ``_UNCONDITIONAL`` (no list,
-    pipeline, subshell, function, loop, condition or substitution)."""
-    current = node.parent
-    while current is not None:
-        if current.type not in _UNCONDITIONAL:
-            return False
-        if current.type == "command" and node.type == "variable_assignment":
-            return False  # `x=1 cmd`: the assignment is for that command only
-        current = current.parent
-    return True
+# What bash may expand in a word before it reads the word as arithmetic: `~` ($HOME, which
+# may carry a subscript), and a process substitution (`<(…)` becomes `/dev/fd/63`).
+_WORD_EXPANSIONS = ("~", "<(", ">(")
+
+
+def _index_pure(index: str) -> bool:
+    if any(e in index for e in _WORD_EXPANSIONS):
+        return False
+    return index.strip() in ("@", "*") or _pure(index)
+
+
+def _word_pure(source: str) -> bool:
+    """Whether a word as written (`let 1+2`, a `[[ ]]` numeric operand) is literal numbers
+    once bash has expanded it: no expansion, glob, brace, tilde or process substitution."""
+    text, causes = lex_word(source)
+    if causes or "{" in source or any(e in source for e in _WORD_EXPANSIONS):
+        return False
+    return _pure(text)
+
+
+def _name_words(node: tree_sitter.Node) -> list[tuple[int, str, bool, str]]:
+    """A command's words with pieces that touch joined (`a[X]` parses as `a` and `[X]`),
+    each with the index (in ``_word_children``) of its first piece, and literal when bash
+    expands nothing in it but its brackets: an element name like `a[0]` is a name, not a
+    glob. The source as written comes last."""
+    groups: list[tuple[int, str]] = []
+    end = None
+    for k, child in enumerate(_word_children(node)):
+        text = _node_text(child)
+        if groups and end == child.start_byte:
+            first, previous = groups.pop()
+            groups.append((first, previous + text))
+        else:
+            groups.append((k, text))
+        end = child.end_byte
+    result = []
+    for first, source in groups:
+        text, causes = lex_word(source)
+        # A glob is a literal name only as one element `name[…]`, which can only expand to
+        # a name without brackets; `a*` may expand to a file named `a[$(id)]`.
+        literal = not causes or (causes == {"glob"} and bool(_ELEMENT_FORM.fullmatch(text)))
+        result.append((first, text, literal, source))
+    return result
+
+
+_ELEMENT_FORM = re.compile(r"[A-Za-z_]\w*\[[^\[\]*?]*\]")
+
+
+def _operands(node: tree_sitter.Node, head: int) -> list[tuple[str, bool, str]]:
+    """The words after the command word (``_word_children`` index ``head``), with element
+    names joined and judged as names (``_name_words``), each with its source."""
+    return [(text, literal, source) for first, text, literal, source in _name_words(node) if first > head]
+
+
+def _unproven_compound_keys(array: tree_sitter.Node) -> bool:
+    """Whether a compound assignment `([k]=v …)` has a key that is not literal numbers.
+    Bash reads an element that starts with an unquoted `[` and holds a `=` as `[key]=v`,
+    the key up to the matching `]`; the key is read from the source as written, so any
+    quote, expansion or nested bracket in it counts as not proven (`[${X:-1]x}]=v`)."""
+    elements: list[str] = []
+    end = None
+    for piece in array.named_children:  # `[b[0]+$1]=1` parses as several touching pieces
+        if elements and piece.start_byte == end:
+            elements[-1] += _node_text(piece)
+        else:
+            elements.append(_node_text(piece))
+        end = piece.end_byte
+    for text in elements:
+        if text.startswith("["):
+            # `[0]=v`; anything else that starts with `[` may be a key bash reads up to
+            # its matching `]`, across nested brackets, quotes or spaces (`[ X ]=1`).
+            match = re.match(r"\[([^\[\]]*)\]\+?=", text)
+            if match is None or not _index_pure(match.group(1)):
+                return True
+    return False
+
+
+def _element_indexes(text: str) -> list[str]:
+    """The index of every array element a word names, nested ones whole (`a[b[0]+x]`)."""
+    out, depth, start = [], 0, None
+    for i, c in enumerate(text):
+        if c == "[":
+            if depth == 0 and i > 0 and (text[i - 1].isalnum() or text[i - 1] == "_"):
+                start = i + 1
+            depth += 1
+        elif c == "]" and depth:
+            depth -= 1
+            if depth == 0 and start is not None:
+                out.append(text[start:i])
+                start = None
+    return out
+
+
+def _substring_offset(text: str) -> str | None:
+    """The `off:len` of a `${…:off:len}` expansion, or None: the first `:` outside
+    brackets after the parameter, not followed by `-`, `=`, `?` or `+`."""
+    if not text.startswith("${") or not text.endswith("}"):
+        return None
+    depth = 0
+    for i in range(2, len(text) - 1):
+        c = text[i]
+        if c == "[":
+            depth += 1
+        elif c == "]":
+            depth -= 1
+        elif depth == 0 and c in "#%/^,@":
+            if i > 2:
+                return None  # another operator came first (`${x#…}`, `${x/…}`)
+        elif depth == 0 and c == ":":
+            rest = text[i + 1 : -1]
+            return None if rest[:1] in ("-", "=", "?", "+") else rest
+    return None
 
 
 def _in_double_bracket(node: tree_sitter.Node) -> bool:
@@ -1609,156 +1740,393 @@ def _in_double_bracket(node: tree_sitter.Node) -> bool:
     return current is not None and bool(current.children) and current.children[0].type == "[["
 
 
-def _words(node: tree_sitter.Node) -> list[str]:
-    return [lex_word(_node_text(c))[0] for c in node.named_children]
+def _lexed(node: tree_sitter.Node) -> list[tuple[str, bool]]:
+    """A command's words (not its redirects or prefix assignments) after quote removal,
+    each with whether it is literal."""
+    out = []
+    for child in _word_children(node):
+        text, causes = lex_word(_node_text(child))
+        out.append((text, not causes))
+    return out
 
 
-def _unproven_arithmetic(root: tree_sitter.Node) -> bool:
-    reads: list[tuple[str, int]] = []  # (arithmetic text, where it is read)
-    writes: dict[str, list[tuple[bool, int, tuple[int, int] | None]]] = {}
-    other_writes: set[str] = set()  # written in a way that proves no number
-    integers: set[str] = set()
-    associative: set[str] = set()
+def _word_children(node: tree_sitter.Node) -> list[tree_sitter.Node]:
+    """The children of a command or declaration that are its words: not redirects, not a
+    redirect's `{fd}`, not prefix assignments (`x=1 cmd`)."""
+    return [
+        child
+        for child in node.named_children
+        if not child.type.endswith("_redirect")
+        and child.type != "ERROR"  # a mis-parsed piece is no word (the tree is untrusted)
+        and not _redirect_descriptor(child, node)
+        and not (child.type == "variable_assignment" and node.type == "command")
+    ]
 
-    def write(name: str, numeric: bool, end: int, unconditional: bool, scope=None) -> None:
-        if not numeric:
-            other_writes.add(name)
-        elif unconditional:
-            writes.setdefault(name, []).append((numeric, end, scope))
 
-    def arithmetic(text: str, node: tree_sitter.Node, scope=None) -> None:
-        reads.append((text, node.start_byte))
-        top = _unconditional(node) or scope is not None
-        for m in _ARITHMETIC_WRITE.finditer(text):
-            write(m.group(1) or m.group(2), True, node.end_byte, top, scope)
+def _redirect_descriptor(child: tree_sitter.Node, node: tree_sitter.Node) -> bool:
+    """Whether ``child`` is the `{fd}` or number of a redirect written right after it,
+    which the grammar leaves as a word (`unset B {fd}>x`, `declare -a {fd}>x`)."""
+    # The redirect may hang on a statement further out (`x || unset B {fd}>x`): take the
+    # next node at any level; it must start exactly where the token ends.
+    after, current = child.next_sibling, node
+    while after is None and current is not None:
+        after, current = current.next_sibling, current.parent
+    return (
+        after is not None
+        and after.type.endswith("_redirect")
+        and after.start_byte == child.end_byte
+        and _is_descriptor_token(_node_text(child))
+    )
 
-    def declaration(words: list[str], node: tree_sitter.Node) -> None:
-        options = "".join(w[1:] for w in words if w.startswith("-"))
-        names = [w.split("=", 1)[0].split("[", 1)[0] for w in words if not w.startswith("-")]
-        if "i" in options:
-            integers.update(names)
-        if "A" in options:
-            associative.update(names)
 
-    nodes = list(_iter_nodes(root))
-    for node in nodes:  # first pass: what the declarations say
-        if node.type == "declaration_command":
-            declaration(_words(node), node)  # the keyword is not a named child
-        elif node.type == "command":
-            words = _words(node)
-            i = 0
-            while i < len(words) and words[i] in BUILTIN_PREFIXES:
-                i += 1
-                while i < len(words) and words[i].startswith("-"):
-                    i += 1
-            if i < len(words) and words[i] in _INTEGER_DECLARERS:
-                declaration(words[i + 1 :], node)
-    for node in nodes:
-        kind = node.type
-        if kind == "arithmetic_expansion":
-            arithmetic(" ".join(_node_text(c) for c in node.named_children), node)
-        elif kind == "compound_statement" and node.text.startswith(b"(("):
-            arithmetic(_node_text(node)[2:-2], node)
-        elif kind == "c_style_for_statement":
-            scope = (node.start_byte, node.end_byte)
-            for field_name in ("initializer", "condition", "update"):
-                for part in node.children_by_field_name(field_name):
-                    arithmetic(_node_text(part), part, scope)
-        elif kind == "binary_expression" and _in_double_bracket(node) and any(
-            c.type == "test_operator" and _node_text(c) in _ARITHMETIC_TESTS for c in node.children
-        ):
-            for side in ("left", "right"):
-                operand = node.child_by_field_name(side)
-                if operand is not None:
-                    arithmetic(lex_word(_node_text(operand))[0], operand)
-        elif kind == "subscript":
-            name = node.child_by_field_name("name")
-            index = node.child_by_field_name("index")
-            if index is None or (name is not None and _node_text(name) in associative):
-                continue
-            text = lex_word(_node_text(index))[0]
-            if text not in ("@", "*"):
-                arithmetic(text, index)
-        elif kind == "expansion":
-            match = _SUBSTRING.match(_node_text(node))
-            if match:
-                arithmetic(match.group(1), node)
-        elif kind == "variable_assignment":
-            name_node = node.child_by_field_name("name")
-            value_node = node.child_by_field_name("value")
-            if name_node is None:
-                continue
-            if name_node.type == "subscript":
-                inner = name_node.child_by_field_name("name")
-                name_node = inner if inner is not None else name_node
-            name = _node_text(name_node)
-            value = lex_word(_node_text(value_node))[0] if value_node is not None else ""
-            if node.parent is not None and node.parent.type == "command":
-                continue  # `x=1 cmd`: set for that command only, not in the shell
-            if name in integers:
-                arithmetic(value, value_node or node)
-            numeric = value == "" or bool(_NUMERIC_VALUE.fullmatch(value)) or name in integers
-            write(name, numeric, node.end_byte, _unconditional(node))
-        elif kind == "for_statement":
-            variable = node.child_by_field_name("variable")
-            if variable is not None:
-                other_writes.add(_node_text(variable))
-        elif kind == "unset_command":
-            for child in node.named_children:
-                text = lex_word(_node_text(child))[0]
-                base, _, rest = text.partition("[")
-                if rest.endswith("]") and base not in associative and rest[:-1] not in ("@", "*"):
-                    arithmetic(rest[:-1], child)
-        elif kind == "command":
-            words = _words(node)
-            i = 0
-            while i < len(words) and words[i] in BUILTIN_PREFIXES:
-                i += 1
-                while i < len(words) and words[i].startswith("-"):
-                    i += 1
-            if i >= len(words):
-                continue
-            head, rest = words[i], words[i + 1 :]
-            if head == "let":
-                for word in rest:
-                    arithmetic(word, node)
-            elif head in _VARIABLE_WRITERS:
-                # `read x`, `printf -v x`, `printf -vx`: a name may be attached to its
-                # option letters, so every suffix of them counts as a name written.
-                for word in rest:
-                    body = word.lstrip("-")
-                    for k in range(len(body) if word.startswith("-") else 1):
-                        if re.fullmatch(r"[A-Za-z_]\w*", body[k:]):
-                            other_writes.add(body[k:])
-            elif head == "unset":
-                for word in rest:
-                    base, _, tail = word.partition("[")
-                    if tail.endswith("]") and base not in associative and tail[:-1] not in ("@", "*"):
-                        arithmetic(tail[:-1], node)
-            elif head in _INTEGER_DECLARERS:
-                for word in rest:
-                    name, eq, value = word.partition("=")
-                    if not eq:
-                        continue
-                    base = name.split("[", 1)[0]
-                    if base in integers:
-                        arithmetic(value, node)
-                    numeric = value == "" or bool(_NUMERIC_VALUE.fullmatch(value)) or base in integers
-                    write(base, numeric, node.end_byte, _unconditional(node))
+def _lexed_head(node: tree_sitter.Node) -> int | None:
+    """``_skip_prefixes`` for a command node's words (as ``_lexed`` lists them): the index
+    of the word that runs, None when nothing runs (no word, or `command -v`/`-V`),
+    ``UNREADABLE`` when a prefix option cannot be read."""
+    words = [make_word(_node_text(c)) for c in _word_children(node)]
+    i = _skip_prefixes(words, _time_reserved(node))
+    if i is None or i == UNREADABLE:
+        return i
+    return i if i < len(words) else None
 
-    def proven(name: str, at: int) -> bool:
-        if name in _SAFE_NUMERIC:
-            return True
-        if name in other_writes:
+
+
+def _display_only(words: list[tuple[str, bool]]) -> bool:
+    """`declare -p`, `-f`, `-F` or `+p` before any operand: displays, writes nothing. A
+    word the walker cannot read ends the options (`declare -"$x" -p …` may be `-- -p`)."""
+    for word, literal in words:
+        if not literal or word == "--" or not word.startswith(("-", "+")):
             return False
-        return any(
-            end <= at and (scope is None or scope[0] <= at < scope[1])
-            for _, end, scope in writes.get(name, [])
-        )
-
-    for text, at in reads:
-        names, from_runtime = _arithmetic_names(text)
-        if from_runtime or not all(proven(name, at) for name in names):
+        if any(c in word[1:] for c in ("pfF" if word[0] == "-" else "p")):
             return True
     return False
 
+
+
+_DESTINATION_OPTIONS = {"read": "a", "printf": "v", "wait": "p", "mapfile": "", "readarray": "", "getopts": ""}
+_DESTINATION_OPERANDS = {"read": "all", "printf": None, "wait": None, "mapfile": 0, "readarray": 0, "getopts": 1}
+_DATA_OPTIONS = {"read": "dinNptu", "printf": "", "wait": "", "mapfile": "dnOsuCc", "readarray": "dnOsuCc", "getopts": ""}
+
+
+def _destinations(head: str, words: list[tuple[str, bool]]) -> tuple[list[str], bool]:
+    """The variables (or elements, `a[x]`) a `read`/`printf`/`wait`/`mapfile`/`getopts`
+    call writes, and whether a destination, or a word that could be an option selecting
+    one (`printf "$opt" x`), cannot be read."""
+    names: list[str] = []
+    if head == "getopts":  # no options of its own: optstring, name, [args]
+        if words and not words[0][1]:
+            return names, True  # `getopts "$dash" …`: it may expand to `--`
+        if words and words[0] == ("--", True):
+            words = words[1:]  # `getopts -- ab OPTIND`
+        if len(words) < 2:
+            return names, False
+        return ([words[1][0]], False) if words[1][1] else (names, True)
+    operands: list[tuple[str, bool]] = []
+    by_option = _DESTINATION_OPTIONS[head]
+    takes = by_option + _DATA_OPTIONS[head]
+    i = 0
+    while i < len(words):
+        text, literal = words[i]
+        if not operands and not literal:
+            return names, True  # it may be an option (`-v`) or a name
+        if operands or text == "-" or not text.startswith("-"):
+            operands.append((text, literal))
+            i += 1
+            continue
+        if text == "--":
+            operands.extend(words[i + 1 :])
+            break
+        for k, letter in enumerate(text[1:], start=1):
+            if letter not in takes:
+                continue
+            attached = text[k + 1 :]
+            if attached:
+                argument = (attached, True)
+            else:
+                i += 1
+                argument = words[i] if i < len(words) else ("", True)
+            if letter in by_option:
+                if not argument[1]:
+                    return names, True
+                names.append(argument[0])
+            break
+        i += 1
+    where = _DESTINATION_OPERANDS[head]
+    picked = operands if where == "all" else (operands[where : where + 1] if where is not None else [])
+    for text, literal in picked:
+        if not literal:
+            return names, True
+        names.append(text)
+    return names, False
+
+
+
+def _unproven_arithmetic(root: tree_sitter.Node) -> bool:
+    for node in _iter_nodes(root):
+        if _unproven_node(node):
+            return True
+    return False
+
+
+def _unproven_node(node: tree_sitter.Node) -> bool:
+    kind = node.type
+    if kind == "arithmetic_expansion":
+        return not _pure(" ".join(_node_text(c) for c in node.named_children))
+    if kind == "compound_statement" and node.text.startswith(b"(("):
+        return not _pure(_node_text(node)[2:-2])
+    if kind == "c_style_for_statement":
+        return any(
+            not _pure(_node_text(part))
+            for field_name in ("initializer", "condition", "update")
+            for part in node.children_by_field_name(field_name)
+        )
+    if kind == "test_command" and not _node_text(node).startswith("[["):
+        # `[ … ]` is the `test` builtin, whose words the grammar parses as an expression:
+        # judge them as `test`'s (`[ $OP ]` with OP='-v a[X]').
+        inner = _node_text(node)[1:].removesuffix("]")
+        command = parse_source(("test " + inner).encode()).root_node
+        return any(_unproven_node(n) for n in _iter_nodes(command))
+    if kind == "test_command" and _node_text(node).startswith("[[") and any(
+        e in _node_text(node) for e in _WORD_EXPANSIONS
+    ) and any(
+        d.type == "test_operator" and _node_text(d) in _ARITHMETIC_TESTS for d in _iter_nodes(node)
+    ):
+        return True  # `[[ ~ -eq 0 ]]`: the grammar reads `~` as an operator, bash as $HOME
+    if kind == "binary_expression" and _in_double_bracket(node) and any(
+        c.type == "test_operator" and _node_text(c) in _ARITHMETIC_TESTS for c in node.children
+    ):
+        sides = [node.child_by_field_name(s) for s in ("left", "right")]
+        return any(side is not None and not _word_pure(_node_text(side)) for side in sides)
+    if kind == "unary_expression" and any(
+        c.type == "test_operator" and _node_text(c) == "-v" for c in node.children
+    ):
+        for operand in node.named_children:
+            if operand.type == "test_operator":
+                continue
+            text, causes = lex_word(_node_text(operand))
+            if causes - {"glob"} or not all(_index_pure(i) for i in _element_indexes(text)):
+                return True  # `[[ -v $name ]]`, `[ -v 'a[x]' ]`
+        return False
+    if kind == "array":
+        # `a=([X]=1)`: the keys of a compound assignment are indexes, which the grammar
+        # leaves as plain words.
+        return _unproven_compound_keys(node)
+    if kind == "subscript":
+        index = node.child_by_field_name("index")
+        if index is None:
+            return False
+        text, causes = lex_word(_node_text(index))
+        return bool(causes - {"glob"}) or not _index_pure(text)  # `${a[$"1"]}`: translated
+    if kind == "expansion":
+        text = _node_text(node)
+        assigned = _DEFAULT_ASSIGNMENT.match(text)
+        if assigned and assigned.group(1) in _BASH_INTEGERS:
+            return True  # `${MAILCHECK:=$1}` assigns to an integer variable
+        if text.startswith("${!") and not _INDIRECT_LISTING.match(text):
+            return True  # `${!name}`: name's value may carry a subscript bash evaluates
+        offset = _substring_offset(text)
+        return offset is not None and not _pure(offset)
+    if kind == "variable_assignment":
+        name_node = node.child_by_field_name("name")
+        if name_node is not None and name_node.type == "subscript":
+            name_node = name_node.child_by_field_name("name") or name_node
+        return name_node is not None and _node_text(name_node) in _BASH_INTEGERS
+    if kind == "for_statement":
+        variable = node.child_by_field_name("variable")
+        return variable is not None and _node_text(variable) in _BASH_INTEGERS
+    if kind == "declaration_command":
+        keyword = node.children[0].text.decode() if node.children else ""
+        sources = [_node_text(c) for c in _word_children(node)]
+        words = [(t, lit, src) for (t, lit), src in zip(_lexed(node), sources)]
+        return _unproven_declaration(keyword, words + _words_after_redirect(node))
+    if kind == "unset_command":
+        return any(
+            not literal or not all(_index_pure(i) for i in _element_indexes(text))
+            for text, literal in [(t, lit) for _, t, lit, _ in _name_words(node)]
+            + [(t, lit) for t, lit, _ in _words_after_redirect(node)]
+        )
+    if kind.endswith("_redirect") and _unproven_descriptor(node):
+        return True  # `: {a[X]}>x`: bash evaluates the element's index
+    if kind == "command_substitution" and _node_text(node).startswith("$(("):
+        # `$((X))` in an unquoted here-doc body parses as a substitution of a subshell
+        # (tree-sitter-bash#325); bash reads it as arithmetic.
+        text = _node_text(node)
+        return not text.endswith("))") or not _pure(text[3:-2])
+    if kind == "subshell" and _node_text(node).startswith("(("):
+        # `time ((X))`, `! ((X))`: bash's arithmetic command, which the grammar parses as
+        # nested subshells after a reserved word.
+        text = _node_text(node)
+        return not text.endswith("))") or not _pure(text[2:-2])
+    if kind == "command":
+        lexed, i = _lexed(node), _lexed_head(node)
+        if i == UNREADABLE:
+            return True  # `command -"$opt" let X`: the command after it may be any
+        sources = [_node_text(c) for c in _word_children(node)]
+        if "coproc" in (sources[:1] + sources[i : i + 1] if i is not None else sources[:1]):
+            return True  # `coproc let X`, `time coproc let X`: the walker does not look into coproc
+        if "[[" in sources:
+            # `time [[ X -eq 0 ]]`, `time [[ -v a[X] ]]`: the grammar parses `[[` as a word
+            # here and may split the conditional at `&&`, so it cannot be read.
+            return True
+        # Words before the command that are assignments (`time RANDOM=$X`): bash makes
+        # them, so they are judged as declarations are.
+        assigned = [
+            (text, literal, source)
+            for (text, literal), source in zip(lexed[: len(lexed) if i is None else i], sources)
+            if _ASSIGNMENT_WORD.match(source)
+        ]
+        if assigned and _unproven_declaration("export", assigned):
+            return True
+        extra = _words_after_redirect(node)
+        if i is None:
+            return bool(extra)  # `command >/dev/null let X`: the command is under the redirect
+        head = lexed[i][0]
+        # A non-literal command word (`"$cmd" X`) may be any command, `eval` and `let`
+        # included: like `eval`, it is opaque to the walker, and callers treat it so
+        # (`may_rewire_stdin` is true for it).
+        operands = _operands(node, i) + extra
+        if head in _DECLARERS:
+            return _unproven_declaration(head, operands)
+        rest = [(text, literal) for text, literal, _ in operands]
+        if head == "let":
+            return any(not _word_pure(source) for _, _, source in operands)
+        if head == "unset":
+            return any(
+                not literal or not all(_index_pure(i) for i in _element_indexes(text))
+                for text, literal in rest
+            )
+        if head in ("test", "["):
+            if any(_may_split(source) and not literal for _, literal, source in operands):
+                return True  # `test $OP`, `test "$@"`, `test {-v,a[X]}`, `test *`
+            for k, (word, literal) in enumerate(rest[:-1]):
+                if word == "-v" or not literal:  # `test "$op" 'a[X]'`: $op may be -v
+                    target, literal = rest[k + 1]
+                    if not literal or not all(_index_pure(i) for i in _element_indexes(target)):
+                        return True  # `test -v "$name"`, `test -v 'a[x]'`
+            return False
+        if head in _VARIABLE_WRITERS:
+            names, dynamic = _destinations(head, rest)
+            if dynamic:
+                return True  # `read "$1"`: may name an element or an integer variable
+            return any(
+                name.split("[", 1)[0] in _BASH_INTEGERS
+                or not all(_index_pure(i) for i in _element_indexes(name))
+                for name in names
+            )
+    return False
+
+
+def _unproven_descriptor(redirect: tree_sitter.Node) -> bool:
+    """Whether the word written right before a redirect operator ends like a named
+    descriptor with an index (`{a[X]}>x`, `{a[b[0]]}>x`) that is not literal numbers.
+    Read from the source, since the grammar splits or misplaces such words."""
+    root = redirect
+    while root.parent is not None:
+        root = root.parent
+    before = root.text[: redirect.start_byte].decode(errors="replace")
+    token = re.split(r"[\s;&|()<>]", before)[-1]
+    if not token.endswith("]}"):
+        return False
+    match = re.fullmatch(r"\{[A-Za-z_]\w*\[(.*)\]\}", token, re.S)
+    return match is None or not _index_pure(match.group(1))
+
+
+_MANY_WORDS = re.compile(r"\$[@*]|\$\{[@*!]|\$\{[^}]*\[[@*]\]")  # `"${a[@]:0}"` too
+
+
+def _words_after_redirect(node: tree_sitter.Node) -> list[tuple[str, bool, str]]:
+    """The words the grammar hung under the redirects of the statement ``node`` is the
+    body of (`let >/dev/null X`, `let <<E X`): bash passes every word after a redirect's
+    target to the command. Each is (text, literal, source), in source order."""
+    # A redirect after `a && let >x X` or `a | let >x X` hangs on the whole list or
+    # pipeline; its words still belong to the last command.
+    body, parent = node, node.parent
+    while parent is not None and parent.type in ("list", "pipeline", "negated_command"):
+        if parent.named_children[-1] != body:
+            return []
+        body, parent = parent, parent.parent
+    if parent is None or parent.type != "redirected_statement" or parent.child_by_field_name("body") != body:
+        return []
+    pieces = []
+    for redirect in parent.children_by_field_name("redirect"):
+        pieces += redirect.children_by_field_name("destination")[1:]
+        pieces += redirect.children_by_field_name("argument")
+    words = []
+    for piece in sorted(pieces, key=lambda n: n.start_byte):
+        source = _node_text(piece)
+        text, causes = lex_word(source)
+        literal = not causes or (causes == {"glob"} and bool(_ELEMENT_FORM.fullmatch(text)))
+        words.append((text, literal, source))
+    return words
+
+
+def _may_split(source: str) -> bool:
+    """Whether a word as written may become several words: an unquoted expansion (split),
+    `"$@"`, `"${a[@]}"` or `${!p*}` even quoted, or an unquoted brace or glob (`{-v,a[X]}`,
+    `*`). Callers excuse a glob that ``_name_words`` judged an element name."""
+    if _MANY_WORDS.search(source):
+        return True
+    quote = None
+    k = 0
+    while k < len(source):
+        c = source[k]
+        if c == "\\" and quote != "'":
+            k += 2
+            continue
+        if quote == "'":
+            quote = None if c == "'" else quote
+        elif c == '"':
+            quote = None if quote == '"' else '"'
+        elif quote is None and c == "'":
+            quote = "'"
+        elif quote is None and c in "$`{*?[":
+            return True
+        k += 1
+    return False
+
+
+# A name written plainly, perhaps after an opening double quote (`"PATH=$x"`), up to `=`.
+_WRITTEN_NAME = re.compile(r'"?[A-Za-z_]\w*(?:\[[^\]$`"\\]*\])?\+?=')
+_DECLARED_NAME = re.compile(r"[A-Za-z_]\w*(?:\[.*\])?\+?", re.S)
+_ARRAY_LITERAL = re.compile(r"[A-Za-z_]\w*(?:\[[^\]]*\])?\+?=\(")
+
+
+def _unproven_declaration(keyword: str, words: list[tuple[str, bool, str]]) -> bool:
+    """A declaration that may make bash evaluate arithmetic: `-i`, an option or name the
+    walker cannot read, a name that is one of bash's integer variables, an element whose
+    index is not literal numbers, or a value bash may reparse as a compound assignment.
+    `declare -p`/`-f` only display. Each word is (text, literal, source as written)."""
+    pairs = [(text, literal) for text, literal, _ in words]
+    if keyword in _INTEGER_DECLARERS and _display_only(pairs):
+        return False
+    options = [text for text, literal in pairs if literal and text.startswith(("-", "+"))]
+    # Bash reparses a value as a compound assignment, whose keys it evaluates, with `-a`
+    # (`declare -a "a=$X"`, also export/readonly), or with declare/typeset/local on a name
+    # that may already be an array (`b=(); declare 'b=([X]=1)'`). Only an unquoted
+    # `name=(` is the grammar's array, whose keys the array rule checks; any other value
+    # that may start with `(` (quoted, or from `$`, `` ` ``, `~` or `{`) is not proven.
+    arrays = keyword in _INTEGER_DECLARERS or any(o[0] == "-" and ("a" in o or "A" in o) for o in options)
+    functions = any(o[0] == "-" and "f" in o for o in options)  # `export -f my-func`
+    for text, literal, source in words:
+        if text.startswith(("-", "+")):
+            # `-i` adds the integer attribute; `+i` removes it.
+            if not literal or (keyword in _INTEGER_DECLARERS and text[0] == "-" and "i" in text[1:]):
+                return True  # `declare -i x`, `declare "$opt" x`
+            continue
+        if not literal and not _WRITTEN_NAME.match(source):
+            # Judged as written: `export OPT"$s"=…` lexes to `OPT…=` but may name OPTIND.
+            return True  # `export "$name=$value"`: the name is not known
+        name, equals, value = text.partition("=")
+        if literal and not functions and not _DECLARED_NAME.fullmatch(name):
+            return True  # `declare -a {a='([X]=1)',b}`: brace expansion makes the name
+        if arrays and equals and not _ARRAY_LITERAL.match(source):
+            written = _STATIC_NAME.match(source)  # `x[2]=$v`: only the value counts
+            value_literal = not lex_word(source[written.end() :])[1] if written else literal
+            if not value_literal or value.startswith(("$", "`", "(", "~", "{")):
+                return True  # `declare -a "a=$X"`, `declare -a 'a=([X]=1)'`
+        name = name.removesuffix("+")  # `OPTIND+=…` appends
+        if name.split("[", 1)[0] in _BASH_INTEGERS:
+            return True  # `export OPTIND=$X`: bash evaluates the value
+        if not all(_index_pure(i) for i in _element_indexes(name)):
+            return True
+    return False

@@ -71,10 +71,14 @@ facts by a caller.
 - Rule 1 lists the grammar disagreements found so far; the differential test checks it
   against bash, `bash -n` and shfmt by sampling generated lines, not exhaustively. A new
   disagreement that gives a wrong fact without being flagged is in scope.
-- Arithmetic on a value from run time is flagged unless the walker proves it is a number
-  (#6). An integer attribute or an unset `RANDOM`-like variable left by an earlier command
-  in a persistent session is session state the walker cannot see; a hidden command reached
-  through arithmetic in one line is in scope.
+- Arithmetic is trusted only when it is literal numbers (#6, #12): any name, `$` or
+  backtick in an arithmetic context or array index (compound-assignment keys and `{a[i]}>`
+  descriptors included), any `-i` declaration, any declared value bash may reparse as a
+  compound assignment, any unquoted expansion in a `test`, any write to one
+  of bash's integer variables, any declaration or destination name the walker cannot
+  read, any indirect `${!name}` and any `coproc` are flagged. Arithmetic run by `eval`, `source` or a
+  callback is the caller's (the walker reports those commands, not what they run); a
+  hidden command reached through arithmetic in one line otherwise is in scope.
 - Wrong stdin and prefix facts for `PATH=… $(true)` and `coproc` (nl-shell#212). Known;
   variants beyond them are in scope.
 - What a command runs later (`eval`'s argument, `source`d files, `python -c`, aliases,

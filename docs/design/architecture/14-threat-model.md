@@ -13,24 +13,32 @@ tags:
 > adversaries are, and which attacks bashwalker must withstand, each mapped to what
 > mitigates it and the test that checks it. Open questions are marked **[OPEN]** inline.
 
-> **How to fill this in:** start small and grow it as surfaces are built; a threat model is
-> never complete. Fill §14.1–§14.3 first, before code exists. Add §14.4–§14.7 as each trust
-> boundary appears in code. A change that adds an untrusted input or moves a trust boundary
-> updates this section in the same PR, and the short summary in
-> `.oss-scanner/threat_model.md` with it. Replace each italic prompt and delete this block
-> once the first three subsections are written. Example:
-> [wyrd](https://github.com/getwyrd/wyrd/blob/main/docs/design/architecture/14-threat-model.md).
-
 ## 14.1 Assets
 
-_What is worth protecting: data, keys, availability, integrity of results. For each, what
-losing it means for users._
+- **The integrity of the facts.** A caller allows or blocks a command on what `walk()`
+  reports: which simple commands there are, their words, whether each word is literal,
+  their assignments, redirects and stdin. A wrong fact that looks proven (a hidden
+  command, a word marked literal that bash expands, a stdin reported as a file that is
+  really the terminal) lets the caller's policy pass a command it would have blocked.
+  For nl-shell that is a command run without confirmation; for pdca-harness's STOP guard
+  a push to a protected branch.
+- **The caller's availability.** `walk()` runs inside the caller's process on every
+  command line, so its time and memory on hostile input must stay bounded.
+- **The caller's logs.** A refusal's message must never carry the input, which may hold
+  secrets or terminal control characters.
 
 ## 14.2 Trust boundaries
 
-_Where data or control crosses from less trusted to more trusted: network inputs, files from
-users, plugins, other services. A diagram in `diagrams/` helps._
-
+- **The command line passed to `walk()`.** Every byte of it is attacker-controlled: the
+  line comes from a language model's proposal (nl-shell), an agent's tool call
+  (pdca-harness's STOP guard) or a person typing. bashwalker parses it with the pinned
+  tree-sitter-bash, a third-party grammar compiled to native code, and hands the resulting
+  `Walk` to the caller as facts. The caller makes a security decision on those facts (run,
+  confirm, block), so the boundary is between the untrusted line and the facts: a fact
+  the walker reports as proven must hold for bash. Whatever the walker cannot prove it
+  reports as the worst case (an untrusted tree, a non-literal word, `unknown` stdin) or
+  refuses (`ParseRefused`), and a caller MUST treat each of those as the worst case for
+  its own rules. bashwalker makes no policy decision itself.
 - **Pull requests from forks, in GitHub Actions.** A PR's code, title, body and branch name
   are attacker-controlled: anyone can open one. The checks run on `pull_request`, where the
   token is read-only and `actions/checkout` keeps no credentials, so PR-supplied code runs
@@ -47,33 +55,81 @@ users, plugins, other services. A diagram in `diagrams/` helps._
 
 ## 14.3 Adversaries
 
-_Who might attack and what they can already do: an anonymous network user, an authenticated
-user, a compromised dependency, an operator with too much access._
+- **A model or agent that writes the command line**, whether confused or steered by a
+  prompt injection. It can write any bytes, retry freely, and learn which forms a policy
+  lets through, so it will find a form tree-sitter-bash reads differently from bash if
+  one exists.
+- **A person typing a command** who wants a form past the caller's policy (for nl-shell,
+  past the confirmation). Same capabilities, fewer attempts.
+- **A compromised or buggy grammar release.** tree-sitter and tree-sitter-bash are pinned
+  exactly, so a new release reaches bashwalker only through a reviewed pin change.
 
 ## 14.4 STRIDE, per boundary
 
-_For each boundary in §14.2: spoofing, tampering, repudiation, information disclosure,
-denial of service, elevation of privilege. Only the ones that apply._
+For the command-line boundary:
+
+- **Tampering / elevation of privilege:** a line that tree-sitter-bash parses differently
+  from bash, so a fact reported as proven is wrong and the caller's policy allows what it
+  should block. The main threat; §14.5 lists the forms.
+- **Denial of service:** a line that makes the parse or the walk slow or deep
+  (tree-sitter-bash's parse time grows with the square of the input).
+- **Information disclosure:** a refusal message that quotes the input into the caller's
+  log or terminal.
+
+For the GitHub Actions boundary, see the bullet in §14.2.
 
 ## 14.5 Attack catalog
 
-_The concrete attacks this kind of system must withstand, each with the decision (ADR) or
-mechanism that mitigates it._
+| Attack | Mitigation |
+|---|---|
+| A form the grammar reads differently from bash: a syntax error or `MISSING` node, extglob, backslash-newline, a here-doc delimiter that is not a plain or fully quoted word, `<<-`, two here-docs on one line, bash 5.3 `${ }`, `<`/`>` inside `[ ]` | Rule 1: `untrusted_features` names it, `Walk.untrusted` is non-empty and every stdin is `unknown`; the caller treats the tree as untrusted |
+| A node or simple command the walk skips, so a command is never reported | Rule 2: one handler per named node kind of the pinned grammar; every walk checks that each named node was visited exactly once and each simple command gave one invocation, else `ParseRefused` |
+| A word that looks literal but bash expands (`$x`, backticks, globs, braces, `~`, `$'…'`, `a=~/b`) | Rule 3: `lex_word` marks a word literal only with none of these, as bash quote-removes it |
+| A stdin that looks like a file or here-doc but is a pipe or the terminal (function bodies, `exec <x` elsewhere, `eval`, `trap`, a dynamic command word, `00<f`) | Rule 3: stdin is proven only in the listed forms; `may_rewire_stdin` makes every other command's stdin `unknown`; a file stdin names its redirect (`Stdin.via`) so the caller can drop it when it rejects that redirect |
+| A token taken for a redirect descriptor, so an argument disappears (`rm {a,b}>x`, `rm ١>x`) | Only ASCII digits and `{name}` / `{name[subscript]}`, as in bash, are descriptors |
+| A huge or deeply nested line | Rule 5: `Limits` (8 KiB checked before parsing, a 4096-node work budget, 100 levels), else `ParseRefused` |
+| Input echoed through an error | `ParseRefused` messages are fixed text |
 
 ## 14.6 Abuse-case tests
 
-_Tests that play the attacker: malformed input, replay, resource exhaustion, privilege
-probing._
+In `tests/test_core.py`: every Rule 1 form (`test_rule1_*`); removing any one handler or
+skipping a node's children must refuse the walk, for every node kind in the pinned
+grammar (`test_rule2_removed_handler_is_refused`, `test_rule2_skipped_children_are_refused`);
+inputs at and over the size cap, deep nesting and long chains (`test_rule5_*`); and
+inputs that hold control characters in refused lines (`test_refusals_never_quote_the_input`).
 
 ## 14.7 Threat → test map
 
-_A table: threat, mitigation, the test that proves it. A threat without a test is a gap
-(§14.9)._
+| Threat | Mitigation | Test |
+|---|---|---|
+| Grammar disagreement hides a form | Rule 1 | `test_rule1_names_each_feature`, `test_rule1_quoted_text_is_trusted`, `test_rule1_untrusted_tree_proves_no_stdin` |
+| A command the walk never reports | Rule 2 | `test_rule2_one_invocation_per_simple_command`, `test_rule2_every_kind_has_a_handler`, `test_rule2_removed_handler_is_refused`, `test_rule2_skipped_children_are_refused`, `test_walk_reaches_every_simple_command` |
+| A non-literal word reported literal | Rule 3 | `test_rule3_literal_flag`, `test_declaration_operands` |
+| A wrong stdin fact | Rule 3 | `test_rule3_stdin_sources`, `test_rule3_file_stdin_names_its_redirect`, `test_unreadable_targets_are_marked`, `test_command_head_and_stdin_rewiring` |
+| A word lost to a descriptor | descriptor syntax | `test_words_next_to_redirects_are_kept` |
+| Wrong redirect facts | redirect facts | `test_redirect_facts` |
+| Slow or deep input | Rule 5 | `test_rule5_inputs_at_the_cap_are_walked`, `test_rule5_over_cap_is_never_parsed`, `test_rule5_work_and_depth_budgets`, `test_rule5_limits_are_the_callers` |
+| Input in a refusal | fixed messages | `test_refusals_never_quote_the_input` |
 
 ## 14.8 Residual and accepted risks
 
-_What is not mitigated, why that is acceptable, and who accepted it._
+- **What a line runs later is not in the line.** A script file, `python -c '…'`, `eval`'s
+  argument, an alias, or a function defined outside the line: the walker reports the
+  command (`eval`, `source`, `.` and `trap` are listed in `SHELL_RUNNERS` and
+  `CODE_LATER`) but not what it will run. A caller that must know treats these commands
+  as opaque.
+- **tree-sitter itself.** A memory-safety bug in tree-sitter or the compiled grammar is
+  out of this project's reach; the exact pin limits exposure to reviewed releases.
+- **Run-time state.** The walker sees text, not the shell it will run in: the cwd,
+  `HOME`, the current branch, defined functions and aliases are the caller's to check.
 
 ## 14.9 Gaps and their disposition
 
-_Known gaps, each with an issue or milestone that closes it._
+- **Forms Rule 1 does not list yet.** Rule 1 lists the disagreements found so far; there is
+  no independent check that it is complete. The differential oracle test (each string
+  parsed by tree-sitter-bash, `bash -n`, shfmt and bash's own `declare -f` reprint, in a
+  sandbox) closes this; it is specified in nl-shell's `policy-gate/v1` and tracked as
+  nl-shell#191, to move here.
+- **Known misreads, open in nl-shell and moving here:** nested backticks and backticks in
+  an unquoted here-doc hide commands and fd-3 redirects (nl-shell#213); wrong stdin and
+  prefix facts for `PATH=… $(true)`, `coproc` and `</dev/stdin` (nl-shell#212).

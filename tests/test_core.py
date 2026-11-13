@@ -8,6 +8,7 @@ worst case (``unknown`` stdin, a non-literal word, an untrusted tree, ``ParseRef
 from __future__ import annotations
 
 import itertools
+import time
 
 import pytest
 import tree_sitter
@@ -333,10 +334,13 @@ def test_unreadable_targets_are_marked():
 def test_rule5_inputs_at_the_cap_are_walked(unit):
     command = (unit * 8192)[:8192]
     assert len(command.encode()) == 8192
+    start = time.monotonic()
     try:
         bashwalker.walk(command)
     except bashwalker.ParseRefused as exc:
         assert "input over" not in str(exc)
+    # tree-sitter-bash's parse time grows with the square of the input: the cap bounds it.
+    assert time.monotonic() - start < 5.0
 
 
 def test_rule5_over_cap_is_never_parsed(monkeypatch):

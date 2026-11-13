@@ -56,6 +56,9 @@ UNTRUSTED = {
     "printf -v 'a[b[0]+$(touch m)0]' x": "subscript with a substitution",
     "declare -a 'x[b[0]+$(touch m)0]=1'": "subscript with a substitution",
     "a['$(touch m)0']=1": "subscript with a substitution",
+    "v='x'; printf '%s' \"${v@P}\"": "@P",
+    ": \"${a[@]@P}\" ${!p@P}": "@P",
+    "command unset 'a[$(touch m)0]'": "unset operand with a subscript",
     "declare a['$(touch m)0']=1": "subscript with a substitution",
     "a[$'\\x24(touch m)0']=1": "subscript with a substitution",
     "printf -v $'a[\\x24(touch m)0]' x": "subscript with a substitution",
@@ -408,6 +411,19 @@ def test_function_redirects_run_at_call_time():
     walked = bashwalker.walk('f() { :; } <"$(cat)"; printf x | f')
     cat = next(i for i in walked.invocations if i.words[0].text == "cat")
     assert (cat.stdin.kind, cat.in_function) == ("unknown", True)
+
+
+def test_declarations_behind_command_and_builtin():
+    # bash 5.3 performs these assignments; the grammar parses them as plain commands.
+    for command, name in (
+        ("command export 'PATH=/x'", "PATH"),
+        ("builtin readonly 'X=y'", "X"),
+        ("command -p declare Y=z", "Y"),
+    ):
+        walked = bashwalker.walk(command)
+        assert [(a.name, a.role) for a in walked.assignments] == [(name, "declaration")], command
+    assert bashwalker.walk("command declare -a 'x[$(touch m)]=1'").untrusted
+    assert bashwalker.walk("echo export 'PATH=/x'").assignments == []  # not a prefix
 
 
 def test_declaration_operands():

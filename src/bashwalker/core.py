@@ -462,6 +462,10 @@ def untrusted_features(tree: tree_sitter.Tree, source: bytes) -> tuple[str, ...]
             note("'<' or '>' inside [ ], which bash reads as a redirection")
         if node.type in _TEXT_KINDS and _HIDDEN_SUBSCRIPT.search(_decoded(node)):
             note("quoted text holding a subscript with a substitution bash may evaluate")
+        if node.type == "expansion" and node.text.endswith(b"@P}"):
+            # `${v@P}` expands v's value as a prompt, which runs `$(…)` in it; the value
+            # is only known at run time.
+            note("${…@P} prompt expansion, which runs the value's substitutions")
         if node.type == "subscript":
             # The whole index, whose quoted pieces are separate nodes (`a['$(id)0']=1`).
             index = node.child_by_field_name("index")
@@ -836,10 +840,16 @@ def _simple(walker: Walker, node, ctx: Ctx, depth: int, bound: tuple = ()) -> No
     if kind == "command" and not has_name:
         words.insert(0, Word(text="", literal=False, source=""))
     walker.layer.words.extend(words)
-    if kind == "unset":
+    # `command export 'PATH=x'` and `builtin unset …` are the builtins themselves, which
+    # the grammar parses as an ordinary command: look through the prefixes.
+    head = _prefixed_head(words) if kind == "command" else None
+    if head is not None and words[head].text in DECLARATION_BUILTINS:
+        for word in words[head + 1 :]:
+            _declaration_operand(walker, word.source, assignments)
+    if kind == "unset" or (head is not None and words[head].text == "unset"):
         # bash evaluates an array subscript in an unset operand after quote removal, so a
         # quoted operand runs what the tree never parsed (`unset 'a[$(id)0]'`).
-        for word in words[1:]:
+        for word in words[(head or 0) + 1 :]:
             match = _SUBSCRIPTED.fullmatch(word.text)
             if match and not _NUMBER_SUBSCRIPT.fullmatch(match.group(1)):
                 walker.note_untrusted("unset operand with a subscript bash evaluates")
@@ -1188,6 +1198,22 @@ def walk(source: str, limits: Limits = DEFAULT_LIMITS) -> Walk:
         # runs /x).
         layer.invocations = [replace(i, stdin=UNKNOWN) for i in layer.invocations]
     return layer
+
+
+DECLARATION_BUILTINS = ("declare", "typeset", "local", "export", "readonly")
+
+
+def _prefixed_head(words: list[Word]) -> int | None:
+    """The index of the word a ``command``/``builtin`` prefix runs, when there is a
+    literal prefix; None otherwise."""
+    i = 0
+    while i < len(words) and words[i].literal and words[i].text in BUILTIN_PREFIXES:
+        i += 1
+        while i < len(words) and words[i].literal and words[i].text.startswith("-"):
+            i += 1
+    if i == 0 or i >= len(words) or not words[i].literal:
+        return None
+    return i
 
 
 def command_head(invocation: Invocation) -> Word | None:

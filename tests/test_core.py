@@ -491,7 +491,8 @@ def test_time_is_looked_through():
     assert bashwalker.command_head(walked.invocations[0]).text == "git"
     assert stdin_of("time time exec 0<<<'echo X'; bash")["bash"][0] == "unknown"
     # Only as the first, unquoted word: after `command`/`builtin` it is the program.
-    for command in ("command time git push", "builtin time git push", '"time" git push'):
+    # Its options too: `time "-p" git push` runs `-p` (bash 5.3).
+    for command in ("command time git push", "builtin time git push", '"time" git push', 'time "-p" git push', "time \\-- git push"):
         head = bashwalker.command_head(bashwalker.walk(command).invocations[0])
         assert head.text != "git", command
 
@@ -675,6 +676,8 @@ ARITHMETIC_UNPROVEN = [
     # Ultra-strict (#12): any name or `$` in arithmetic, bash's numeric variables too.
     "echo $((RANDOM % 6)) $((SECONDS + LINENO)) $(($# + $?))",
     "echo $(( 2 * ${#y} ))",
+    # A translated index: a message catalog may turn `$"1"` into a name.
+    ': "${a[$"1"]}"',
     "((x = 1))",
     "declare -i y=5",
     "RANDOM=1",

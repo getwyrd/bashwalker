@@ -1456,11 +1456,12 @@ def _skip_prefixes(words: list[Word]) -> int | None:
     i = 0
     # `time` is a reserved word only as the first word, unquoted; after `command` or
     # `builtin` it is the external program, which runs what follows in a child process.
-    while i < len(words) and words[i].source == "time" and all(w.source == "time" or w.text in ("-p", "--") for w in words[:i]):
+    while i < len(words) and words[i].source == "time" and all(w.source in ("time", "-p", "--") for w in words[:i]):
         i += 1  # `time time exec …`: each leading `time` is the reserved word
-        while i < len(words) and words[i].literal and words[i].text == "-p":
+        # Its options are words as written: `time "-p" git` runs `-p`.
+        while i < len(words) and words[i].source == "-p":
             i += 1
-        if i < len(words) and words[i].literal and words[i].text == "--":
+        if i < len(words) and words[i].source == "--":
             i += 1  # `time -- eval …`
     while i < len(words) and words[i].literal and words[i].text in BUILTIN_PREFIXES:
         prefix = words[i].text
@@ -1865,7 +1866,10 @@ def _unproven_node(node: tree_sitter.Node) -> bool:
         return _unproven_compound_keys(node)
     if kind == "subscript":
         index = node.child_by_field_name("index")
-        return index is not None and not _index_pure(lex_word(_node_text(index))[0])
+        if index is None:
+            return False
+        text, causes = lex_word(_node_text(index))
+        return bool(causes - {"glob"}) or not _index_pure(text)  # `${a[$"1"]}`: translated
     if kind == "expansion":
         text = _node_text(node)
         if text.startswith("${!") and not _INDIRECT_LISTING.match(text):

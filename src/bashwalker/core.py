@@ -924,6 +924,12 @@ def _simple(walker: Walker, node, ctx: Ctx, depth: int, bound: tuple = ()) -> No
                 # A nameref can alias any variable, also one bash runs as code
                 # (`declare -n r=PS4; r='$(id)'; set -x; :`).
                 walker.note_untrusted("nameref, which may alias a variable bash runs as code")
+    alias_at = 0 if words and words[0].literal and words[0].text == "alias" else head
+    if alias_at is not None and words[alias_at].text == "alias":
+        if any(not w.literal or "=" in w.text for w in words[alias_at + 1 :]):
+            # An alias changes how bash reads the lines after it, which this tree does
+            # not show (`alias x='exec <payload'` then `x`).
+            walker.note_untrusted("alias definition, which changes how later lines are read")
     if kind == "unset" or (head is not None and words[head].text == "unset"):
         # bash evaluates an array subscript in an unset operand after quote removal, so a
         # quoted operand runs what the tree never parsed (`unset 'a[$(id)0]'`).
@@ -977,10 +983,10 @@ def _displays_only(words: list[Word], declarer: int) -> bool:
     if words[declarer].text not in NAMEREF_BUILTINS:
         return False
     for word in words[declarer + 1 :]:
-        if not word.text.startswith("-"):
-            continue
         if not word.literal:
             return False
+        if word.text == "--" or not word.text.startswith("-"):
+            return False  # options end here (`declare PATH=/x -p` assigns)
         if any(c in word.text[1:] for c in "pfF"):
             return True
     return False
@@ -1374,7 +1380,7 @@ def command_head(invocation: Invocation) -> Word | None:
 SHELL_RUNNERS = ("eval", "source", ".", "fc")  # `fc` re-runs history lines
 # Builtins that install code to run later, which the walker does not see (`trap '…' DEBUG`
 # runs before every later command).
-CODE_LATER = ("trap",)
+CODE_LATER = ("trap", "alias")  # an alias runs its text where it is used
 BUILTIN_PREFIXES = ("command", "builtin")
 # Builtins that take shell code in an option, by the option letters that do.
 CODE_OPTIONS = {"mapfile": "C", "readarray": "C", "complete": "CF", "compgen": "CF", "bind": "x"}

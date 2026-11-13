@@ -84,6 +84,8 @@ UNTRUSTED = {
     "x=$'\\x24(touch m)'": "assigned text holding a substitution",
     "x='a[$'; x+='(touch m)0]'; : $((x))": "assigned text holding a substitution",
     "o=p; command \"-$o\" exec </tmp/payload; bash": "prefix with an option",
+    "shopt -s expand_aliases\nalias x='exec <<<payload'\nx\nbash": "alias definition",
+    "command alias x=y": "alias definition",
     "declare a['$(touch m)0']=1": "subscript with a substitution",
     "a[$'\\x24(touch m)0']=1": "subscript with a substitution",
     "printf -v $'a[\\x24(touch m)0]' x": "subscript with a substitution",
@@ -316,6 +318,8 @@ def test_rule3_stdin_sources():
     assert stdin_of("mapfile -t a; cat")["cat"] == ("terminal", None)
     # `fc` re-runs history lines in the current shell (interactive bash 5.3).
     assert stdin_of("fc -s; cat")["cat"][0] == "unknown"
+    assert stdin_of("alias x=y; cat")["cat"][0] == "unknown"
+    assert not bashwalker.walk("alias").untrusted  # listing defines nothing
     # A rewiring command is not exempt: an earlier one rewires it too (bash 5.3:
     # `exec </x; exec bash >/dev/null` runs /x).
     walked = bashwalker.walk("exec </tmp/payload; exec bash >/dev/null")
@@ -493,6 +497,9 @@ def test_declarations_behind_command_and_builtin():
     for command in ("declare -p PATH=/x", "\"declare\" -p 'PATH=/x'", "typeset -f f", "local -Fp X=1"):
         assert bashwalker.walk(command).assignments == [], command
     assert [a.name for a in bashwalker.walk("declare -x X=1").assignments] == ["X"]
+    # Options end at the first operand or `--` (bash 5.3: `declare PATH=/x -p` assigns).
+    assert [a.name for a in bashwalker.walk("\"declare\" PATH=/x -p").assignments] == ["PATH"]
+    assert [a.name for a in bashwalker.walk("declare -- -p PATH=/x").assignments] == ["PATH"]
     # An option the walker cannot read may assign: X stays, and `"$o"` is an operand it
     # cannot name.
     assert [a.name for a in bashwalker.walk("declare \"$o\" X=1").assignments] == ["X", ""]

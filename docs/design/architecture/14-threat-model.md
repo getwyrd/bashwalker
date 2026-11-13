@@ -89,6 +89,7 @@ For the GitHub Actions boundary, see the bullet in §14.2.
 | A token taken for a redirect descriptor, so an argument disappears (`rm {a,b}>x`, `rm ١>x`, `rm 0&>x`) | Only ASCII digits and `{name}` / `{name[subscript]}`, as in bash, are descriptors, and `&>` / `&>>` take none |
 | A word written after a redirect target, which the grammar files under the redirect, so it disappears from the command (`git push origin >/dev/null HEAD:main`) | The first word after the operator is the target and every later one goes back to the command's words, in source order; with no simple command to take them the tree is untrusted |
 | A declaration hidden behind a prefix or quoting, so its assignment is not reported (`command export 'PATH=/x'`, `builtin readonly 'X=y'`, `"export" 'PATH=/x'`) | `command`/`builtin` prefixes and quoting of the command name are looked through (`command -v`/`-V` only looks up, so it gives no head; `declare -p`/`-f`/`-F` only display, so they record no assignment, options ending at `--` or the first operand); `declare`, `typeset`, `local`, `export`, `readonly` and `unset` behind them get the same checks and facts as without |
+| Arithmetic on a run-time value (environment, argument, `read`, a command's output) whose text holds a subscript with a substitution (`echo $((X))` with `X='a[$(id)]'`) | Rule 1: any arithmetic context (`$(( ))`, `$[ ]`, `(( ))`, `for (( ))`, `let`, `[[ ]]` numeric tests, indexed subscripts, `${s:off:len}`, `-i` assignments) that reads a value the walker cannot prove is a number makes the tree untrusted; a variable is proven only when every write to it in the line gives a number and one ran unconditionally before the read |
 | A huge or deeply nested line | Rule 5: `Limits` (8 KiB checked before encoding and parsing, a 4096-node work budget, 100 levels), else `ParseRefused` |
 | Input echoed through an error | `ParseRefused` messages are fixed text |
 
@@ -111,6 +112,7 @@ inputs that hold control characters in refused lines (`test_refusals_never_quote
 | A word lost to a descriptor | descriptor syntax | `test_words_next_to_redirects_are_kept` |
 | A word lost under a redirect | operands after the target | `test_words_after_a_redirect_target_stay_operands` |
 | A prefixed declaration | prefix look-through | `test_declarations_behind_command_and_builtin` |
+| Arithmetic on a run-time value | unproven arithmetic reads | `test_arithmetic_on_unproven_values_is_untrusted`, `test_arithmetic_on_proven_numbers_is_trusted` |
 | Wrong redirect facts | redirect facts | `test_redirect_facts` |
 | Slow or deep input | Rule 5 | `test_rule5_inputs_at_the_cap_are_walked`, `test_rule5_over_cap_is_never_parsed`, `test_rule5_work_and_depth_budgets`, `test_rule5_limits_are_the_callers` |
 | Input in a refusal | fixed messages | `test_refusals_never_quote_the_input` |
@@ -125,7 +127,11 @@ inputs that hold control characters in refused lines (`test_refusals_never_quote
 - **tree-sitter itself.** A memory-safety bug in tree-sitter or the compiled grammar is
   out of this project's reach; the exact pin limits exposure to reviewed releases.
 - **Run-time state.** The walker sees text, not the shell it will run in: the cwd,
-  `HOME`, the current branch, defined functions and aliases are the caller's to check.
+  `HOME`, the current branch, defined functions and aliases are the caller's to check. For
+  arithmetic this includes an integer attribute an earlier command gave a variable (every
+  value assigned to it is then evaluated) and `RANDOM`, `SECONDS` and the like unset
+  earlier, which lose their numeric meaning: in a persistent session (nl-shell) a caller
+  that must not run hidden commands checks those attributes in the live shell.
 
 ## 14.9 Gaps and their disposition
 
@@ -134,11 +140,6 @@ inputs that hold control characters in refused lines (`test_refusals_never_quote
   parsed by tree-sitter-bash, `bash -n`, shfmt and bash's own `declare -f` reprint, in a
   sandbox) closes this; it is specified in nl-shell's `policy-gate/v1` and tracked as
   nl-shell#191, to move here.
-- **Arithmetic evaluation of a variable whose value comes from run time runs commands the
-  walk never reports** (a value from the environment, `read`, `printf -v` or a command's
-  output, evaluated by `$((v))`, `x[v]=1`, `[[ v -eq 0 ]]`, `let`, `(( ))`): #6. A value
-  written as text in the line is flagged by Rule 1. Until #6 closes, a caller that must
-  not run hidden commands refuses lines with arithmetic contexts that read variables.
 - **Known misreads, open in nl-shell and moving here:** wrong stdin and prefix facts for
   `PATH=… $(true)` and `coproc` (nl-shell#212; its `</dev/stdin` form is fixed). The two
   backtick forms of nl-shell#213 are flagged by Rule 1; other forms of the same kind are

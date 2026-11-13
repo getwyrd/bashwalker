@@ -259,6 +259,12 @@ def lex_word(source: str) -> tuple[str, frozenset[str]]:
             if not closed:
                 causes.add("unclosed quote")
             continue
+        if c == "$" and source[i + 1 : i + 2] == '"':
+            # `$"…"`: a translated string, which in the C locale is the double-quoted text.
+            # The translation is not known, so the word is not literal.
+            causes.add("locale translation")
+            i += 1
+            continue
         if c == "$" and source[i + 1 : i + 2] == "'":
             # `$'…'`: the text is what bash decodes (`$'PS\064'` is `PS4`). bash expands
             # it, so the word is not literal, but every check reads the decoded text.
@@ -924,6 +930,14 @@ def _simple(walker: Walker, node, ctx: Ctx, depth: int, bound: tuple = ()) -> No
                 # A nameref can alias any variable, also one bash runs as code
                 # (`declare -n r=PS4; r='$(id)'; set -x; :`).
                 walker.note_untrusted("nameref, which may alias a variable bash runs as code")
+    hash_at = 0 if words and words[0].literal and words[0].text == "hash" else head
+    if hash_at is not None and words[hash_at].text == "hash":
+        for word in words[hash_at + 1 :]:
+            if not word.literal or (word.text.startswith("-") and "p" in word.text):
+                # `hash -p /x ls` makes a later `ls` run /x: command words stop meaning
+                # what they say.
+                walker.note_untrusted("hash -p, which changes what a command name runs")
+                break
     alias_at = 0 if words and words[0].literal and words[0].text == "alias" else head
     if alias_at is not None and words[alias_at].text == "alias":
         if any(not w.literal or "=" in w.text for w in words[alias_at + 1 :]):
@@ -985,7 +999,7 @@ def _displays_only(words: list[Word], declarer: int) -> bool:
     for word in words[declarer + 1 :]:
         if not word.literal:
             return False
-        if word.text == "--" or not word.text.startswith("-"):
+        if word.text == "--" or not word.text.startswith(("-", "+")):
             return False  # options end here (`declare PATH=/x -p` assigns)
         if any(c in word.text[1:] for c in "pfF"):
             return True
@@ -1319,6 +1333,8 @@ CODE_VARIABLES = (
     "PS0", "PS1", "PS2", "PS3", "PS4", "PROMPT_COMMAND", "BASH_ENV", "ENV",
     "MAILPATH",  # an interactive shell command-expands its `?message` on new mail
     "FCEDIT",  # `fc` runs it as the editor
+    "BASH_ALIASES",  # defines aliases, like `alias`
+    "BASH_CMDS",  # maps a command name to the file bash runs for it, like `hash -p`
 )
 _NAMES_CODE_VARIABLE = re.compile(
     # Also attached to any options (`printf -vPS4`, `read -aPS4`).

@@ -86,6 +86,10 @@ UNTRUSTED = {
     "o=p; command \"-$o\" exec </tmp/payload; bash": "prefix with an option",
     "shopt -s expand_aliases\nalias x='exec <<<payload'\nx\nbash": "alias definition",
     "command alias x=y": "alias definition",
+    "BASH_ALIASES[bash]='exec <<<x; bash'": "bash runs as code",
+    "BASH_CMDS[ls]=/tmp/evil; ls": "bash runs as code",
+    "hash -p /tmp/evil ls; ls": "hash -p",
+    "printf -v $\"PS4\" x; set -x; :": "bash runs as code",
     "declare a['$(touch m)0']=1": "subscript with a substitution",
     "a[$'\\x24(touch m)0']=1": "subscript with a substitution",
     "printf -v $'a[\\x24(touch m)0]' x": "subscript with a substitution",
@@ -396,6 +400,7 @@ def test_rule3_literal_flag():
     assert bashwalker.lex_word("$'PS\\064'") == ("PS4", frozenset({"expansion"}))
     assert bashwalker.lex_word("a$'\\x2f'b") == ("a/b", frozenset({"expansion"}))
     assert bashwalker.lex_word("$'it\\'s'")[0] == "it's"
+    assert bashwalker.lex_word('$"PS4"') == ("PS4", frozenset({"locale translation"}))
 
 
 def test_declaration_operands_after_a_redirect():
@@ -500,6 +505,7 @@ def test_declarations_behind_command_and_builtin():
     # Options end at the first operand or `--` (bash 5.3: `declare PATH=/x -p` assigns).
     assert [a.name for a in bashwalker.walk("\"declare\" PATH=/x -p").assignments] == ["PATH"]
     assert [a.name for a in bashwalker.walk("declare -- -p PATH=/x").assignments] == ["PATH"]
+    assert bashwalker.walk("\"declare\" +p 'PATH=/x'").assignments == []  # +p displays too
     # An option the walker cannot read may assign: X stays, and `"$o"` is an operand it
     # cannot name.
     assert [a.name for a in bashwalker.walk("declare \"$o\" X=1").assignments] == ["X", ""]

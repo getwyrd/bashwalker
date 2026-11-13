@@ -7,22 +7,27 @@ differ about what exists in code today, this file describes the code and §14 de
 design it is growing into. A change that adds an untrusted input or moves a trust boundary
 updates both in the same PR.
 
-_Fill in each section; delete the italic prompts. Models:
-[wyrd](https://github.com/getwyrd/wyrd/blob/main/.oss-scanner/threat_model.md),
-[nl-shell](https://github.com/getwyrd/nl-shell/blob/main/.oss-scanner/threat_model.md)._
-
 ## What this project does
 
-_The components and how data flows between them, in a few paragraphs or a small diagram._
+bashwalker is a Python library with one entry point: `walk(line)` parses a bash command
+line with the pinned tree-sitter-bash grammar (`src/bashwalker/core.py`) and returns a
+`Walk`, one `Invocation` per simple command with its words (each marked literal or not),
+assignments, redirects and stdin, plus the features that make the tree untrusted. Callers
+make security decisions on these facts: nl-shell's policy gate decides whether a
+model-proposed command runs, and pdca-harness's STOP guard whether an agent's `git` or
+`gh` call is allowed. bashwalker itself runs nothing and decides nothing.
 
 ## Where untrusted input enters
 
 Treat all of the following as attacker-controlled:
 
-1. _Each input an attacker can control: where it enters, who controls it, which component
-   parses it._
+1. **The command line passed to `walk()`**, every byte of it. It is written by a language
+   model, an agent or a person, any of whom may be trying to get a command past the
+   caller's policy. It is parsed by tree-sitter-bash (third-party, native code) and then
+   walked by `core.py`.
 
-Trusted: _what is not attacker-controlled, and why._
+Trusted: the pinned grammar release (changed only by a reviewed pin), the `Limits` the
+caller passes, and the caller's own handling of the facts.
 
 Already in place from the template: `.github/workflows/welcome-first-time-contributor.yml`
 runs on `pull_request_target`, so it holds a token with `pull-requests: write` (its only
@@ -34,20 +39,46 @@ PR number from the payload and posts a fixed comment. A change that adds an
 
 ## What must hold
 
-- _The properties a finding breaks. These are what the security review checks._
+- **No wrong fact looks proven.** Every simple command bash would run in the line appears
+  as an `Invocation` (also inside substitutions, functions and here-doc command lines); a
+  word marked `literal` is one bash does not expand; a stdin other than `unknown` is where
+  bash really reads from. When the walker cannot prove a fact it reports the worst case
+  (`Walk.untrusted`, a non-literal word, `unknown` stdin) or raises `ParseRefused`.
+- **Grammar disagreements are flagged.** A line that tree-sitter-bash reads differently
+  from bash gives a non-empty `Walk.untrusted`, never a clean tree.
+- **Bounded work.** Input over the size cap is refused before it is parsed; the walk has a
+  node budget and a depth limit.
+- **Refusals never quote the input.**
+
+A finding that breaks one of these is in scope even if no current caller is affected:
+the facts are the contract.
 
 ## Components that matter most
 
-In order: _the components, most exposed first._
+In order: `untrusted_features` (Rule 1), the walk and its handlers including
+`_check_walk` (Rule 2), `lex_word` and the stdin logic (`_stdin_after`,
+`may_rewire_stdin`, Rule 3), descriptor and redirect handling, then `Limits` (Rule 5). All
+are in `src/bashwalker/core.py`.
 
-Lower priority: _test tools, build automation._
+Lower priority: `scripts/build_bash.py` (test tooling), the GitHub workflows.
 
-Out of scope: _generated code; third-party code (report a dependency bug only if this
-project's use of it is what makes it exploitable)._
+Out of scope: tree-sitter and tree-sitter-bash themselves (report a grammar bug only if
+bashwalker's use of it turns it into a wrong fact that looks proven); policy built on the
+facts by a caller.
 
 ## Known gaps: do not report these on their own
 
-- _Each known, accepted gap, and what about it is still in scope._
+- Rule 1 lists the grammar disagreements found so far; the differential oracle test that
+  would find the rest is not here yet (nl-shell#191, moving here). A new disagreement that
+  gives a wrong fact without being flagged is still in scope.
+- Arithmetic evaluation of a variable whose value comes from run time (the environment,
+  `read`, a command's output) runs commands the walk never reports: #6. A value written as
+  text in the line, also in pieces (`x='a[$'; x+='(id)0]'`), is flagged; a hidden command reached another way is in scope.
+- Wrong stdin and prefix facts for `PATH=… $(true)` and `coproc` (nl-shell#212). Known;
+  variants beyond them are in scope.
+- What a command runs later (`eval`'s argument, `source`d files, `python -c`, aliases,
+  functions defined elsewhere) is not in the line. The walker reports the command, not
+  what it runs.
 - The pre-commit secret guard (`.pre-commit-config.yaml`: machine-local Claude Code settings,
   credential files, gitleaks) runs only in clones where it was activated (the hook reads copies of the config
   and the gitleaks policy taken from the default branch) and is skipped by `git commit --no-verify`. A way to get a secret committed past an *active*
@@ -55,14 +86,20 @@ project's use of it is what makes it exploitable)._
 
 ## How to exercise it
 
-_The test command, how to run the system locally, and how to drive the exposed inputs._
+```bash
+python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'
+.venv/bin/python -m pytest
+.venv/bin/python -c 'import bashwalker; print(bashwalker.walk("cat <<E | sh\nid\nE"))'
+```
 
 ## How we rate severity
 
-- **Critical:** _…_
-- **High:** _…_
-- **Medium:** _…_
-- **Low:** _…_
+- **Critical:** a command bash runs is missing from `invocations`, or a word bash expands
+  is marked literal, in a tree reported as trusted.
+- **High:** another wrong fact that looks proven in a trusted tree (a stdin, a redirect's
+  descriptor or target, an assignment's role), or an unflagged grammar disagreement.
+- **Medium:** unbounded time or memory within the limits; a refusal that quotes the input.
+- **Low:** a fact reported as worst case that could have been proven.
 
 A clean reproducer matters more than a severity label. The best form is a failing test in
 the style of the existing ones.

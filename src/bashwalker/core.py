@@ -495,6 +495,11 @@ def untrusted_features(tree: tree_sitter.Tree, source: bytes) -> tuple[str, ...]
                 if inner.type in _TEXT_KINDS and _SUBSTITUTION_TEXT.search(_decoded(inner)):
                     note("quoted text in an arithmetic context holding a substitution")
                     break
+        if node.type == "for_statement":  # also `select`, which the grammar parses so
+            target = node.child_by_field_name("variable")
+            if target is not None and target.text.decode("utf-8", "replace") in CODE_VARIABLES:
+                # `for PS4 in '$(id)'; do set -x; :; done` sets PS4 to each value.
+                note("a variable bash runs as code (PS4, PROMPT_COMMAND, …) is set")
         if node.type == "expansion" and node.text.endswith(b"@P}"):
             # `${v@P}` expands v's value as a prompt, which runs `$(…)` in it; the value
             # is only known at run time.

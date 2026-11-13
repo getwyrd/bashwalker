@@ -77,6 +77,8 @@ UNTRUSTED = {
     "FCEDIT=x fc": "bash runs as code",
     "printf -v $'PS\\064' x; set -x; :": "bash runs as code",
     "read $'P\\x534' <<<x": "bash runs as code",
+    "for PS4 in x; do set -x; :; done": "bash runs as code",
+    "select PS1 in a; do :; done": "bash runs as code",
     "declare a['$(touch m)0']=1": "subscript with a substitution",
     "a[$'\\x24(touch m)0']=1": "subscript with a substitution",
     "printf -v $'a[\\x24(touch m)0]' x": "subscript with a substitution",

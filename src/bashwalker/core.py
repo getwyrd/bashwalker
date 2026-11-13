@@ -1589,8 +1589,14 @@ def _name_words(node: tree_sitter.Node) -> list[tuple[str, bool]]:
     result = []
     for _, _, source in out:
         text, causes = lex_word(source)
-        result.append((text, not (causes - {"glob"})))
+        # A glob is a literal name only as one element `name[…]`, which can only expand to
+        # a name without brackets; `a*` may expand to a file named `a[$(id)]`.
+        literal = not causes or (causes == {"glob"} and bool(_ELEMENT_FORM.fullmatch(text)))
+        result.append((text, literal))
     return result
+
+
+_ELEMENT_FORM = re.compile(r"[A-Za-z_]\w*\[[^\[\]*?]*\]")
 
 
 def _operands(node: tree_sitter.Node, lexed: list[tuple[str, bool]], head: int) -> list[tuple[str, bool]]:
@@ -1665,6 +1671,7 @@ def _word_children(node: tree_sitter.Node) -> list[tree_sitter.Node]:
         child
         for child in node.named_children
         if not child.type.endswith("_redirect")
+        and child.type != "ERROR"  # a mis-parsed piece is no word (the tree is untrusted)
         and not _redirect_descriptor(child, node)
         and not (child.type == "variable_assignment" and node.type == "command")
     ]
@@ -1720,6 +1727,8 @@ def _destinations(head: str, words: list[tuple[str, bool]]) -> tuple[list[str], 
     one (`printf "$opt" x`), cannot be read."""
     names: list[str] = []
     if head == "getopts":  # no options of its own: optstring, name, [args]
+        if words and words[0] == ("--", True):
+            words = words[1:]  # `getopts -- ab OPTIND`
         if len(words) < 2:
             return names, False
         return ([words[1][0]], False) if words[1][1] else (names, True)
@@ -1827,6 +1836,9 @@ def _unproven_node(node: tree_sitter.Node) -> bool:
         if i is None or i == UNREADABLE:
             return False  # the walk itself treats an unreadable prefix
         head = lexed[i][0]
+        # A non-literal command word (`"$cmd" X`) may be any command, `eval` and `let`
+        # included: like `eval`, it is opaque to the walker, and callers treat it so
+        # (`may_rewire_stdin` is true for it).
         rest = _operands(node, lexed, i)
         if head == "let":
             return any(not _pure(t) for t, _ in rest)
@@ -1838,8 +1850,8 @@ def _unproven_node(node: tree_sitter.Node) -> bool:
                 for text, literal in rest
             )
         if head in ("test", "["):
-            for k, (word, _) in enumerate(rest[:-1]):
-                if word == "-v":
+            for k, (word, literal) in enumerate(rest[:-1]):
+                if word == "-v" or not literal:  # `test "$op" 'a[X]'`: $op may be -v
                     target, literal = rest[k + 1]
                     if not literal or not all(_index_pure(i) for i in _element_indexes(target)):
                         return True  # `test -v "$name"`, `test -v 'a[x]'`

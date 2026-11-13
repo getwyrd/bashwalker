@@ -611,6 +611,9 @@ ARITHMETIC_SINKS = [
     "declare -i 'n=X'",
     "read 'a[OPTIND[0]-1+X]' <<<z",
     'a[0]=abc; echo "${a[OPTIND[0]-1]:X}"',
+    # Ninth local review of #13.
+    "a=$X; getopts -- ab OPTIND -a",
+    "op=-v; test \"$op\" 'a[X]'",
     "REPLY=1; read -p x; echo $((REPLY))",
     "REPLY=1; read -r -t 1 -d '' ; echo $((REPLY))",
     "v=x; x=1; mapfile -t \"$v\"; echo $((x))",
@@ -648,6 +651,11 @@ def test_arithmetic_on_unproven_values_is_untrusted(command):
     assert any("arithmetic" in f for f in bashwalker.walk(command).untrusted), command
 
 
+def test_glob_destination_is_untrusted():
+    # bash 5.3, with a file named a[$(>pw)] in the directory: `read a*` reads into it.
+    assert any("arithmetic" in f for f in bashwalker.walk("read a* <<<z").untrusted)
+
+
 def test_arithmetic_on_literal_numbers_is_trusted():
     for command in (
         "echo $((1 + 2)) $[3] $((0x1f + 16#ff + 2#101)) $(( (4 << 1) % 3 ))",
@@ -658,6 +666,8 @@ def test_arithmetic_on_literal_numbers_is_trusted():
         "REPLY=1; read x <<<foo; printf -v y %s z; read 'a[0]' <<<z",
         "declare -p \"$name\"; typeset -f f; export A=1 PATH=\"$PATH:/x\"",
         "unset a[0] x; test -v x; [[ -v a[1] ]]",
+        'test "$x" = y; [ -n "$x" ]; read a[0] <<<z',
+        "~/bin/tool x; $'\\x72m' -f y",
     ):
         walked = bashwalker.walk(command)
         assert not any("arithmetic" in f for f in walked.untrusted), (command, walked.untrusted)

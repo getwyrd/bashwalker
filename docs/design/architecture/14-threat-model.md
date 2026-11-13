@@ -121,7 +121,7 @@ inputs that hold control characters in refused lines (`test_refusals_never_quote
 
 ## 14.8 Residual and accepted risks
 
-- **What a line runs later is not in the line.** A script file, `python -c '…'`, `eval`'s
+- **What a line runs later is not in the line.** A non-literal command word (`"$cmd" x`, which may be any command, `eval` or `let` included), a script file, `python -c '…'`, `eval`'s
   argument, an alias, or a function defined outside the line: the walker reports the
   command (`eval`, `source`, `.` and `trap` are listed in `SHELL_RUNNERS` and
   `CODE_LATER`) but not what it will run. A caller that must know treats these commands

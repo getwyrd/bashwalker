@@ -613,6 +613,17 @@ def test_rule5_over_cap_is_never_parsed(monkeypatch):
     assert calls == []
 
 
+def test_rule5_oversized_text_is_refused_before_encoding():
+    class Huge(str):
+        def encode(self, *args, **kwargs):
+            raise AssertionError("encoded")
+
+    with pytest.raises(bashwalker.ParseRefused, match="input over 8 KiB"):
+        bashwalker.walk(Huge("a" * 8193))
+    with pytest.raises(bashwalker.ParseRefused, match="input over 8 KiB"):
+        bashwalker.walk("é" * 4097)  # under the cap in characters, over it in bytes
+
+
 def test_rule5_work_and_depth_budgets():
     deep = "echo " + "$(echo " * 150 + ")" * 150
     chain = "echo " + "$(:)" * 1500

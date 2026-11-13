@@ -89,7 +89,7 @@ For the GitHub Actions boundary, see the bullet in §14.2.
 | A token taken for a redirect descriptor, so an argument disappears (`rm {a,b}>x`, `rm ١>x`, `rm 0&>x`) | Only ASCII digits and `{name}` / `{name[subscript]}`, as in bash, are descriptors, and `&>` / `&>>` take none |
 | A word written after a redirect target, which the grammar files under the redirect, so it disappears from the command (`git push origin >/dev/null HEAD:main`) | The first word after the operator is the target and every later one goes back to the command's words, in source order; with no simple command to take them the tree is untrusted |
 | A declaration hidden behind a prefix or quoting, so its assignment is not reported (`command export 'PATH=/x'`, `builtin readonly 'X=y'`, `"export" 'PATH=/x'`) | `command`/`builtin` prefixes and quoting of the command name are looked through (`command -v`/`-V` only looks up, so it gives no head; `declare -p`/`-f`/`-F` only display, so they record no assignment, options ending at `--` or the first operand); `declare`, `typeset`, `local`, `export`, `readonly` and `unset` behind them get the same checks and facts as without |
-| A huge or deeply nested line | Rule 5: `Limits` (8 KiB checked before parsing, a 4096-node work budget, 100 levels), else `ParseRefused` |
+| A huge or deeply nested line | Rule 5: `Limits` (8 KiB checked before encoding and parsing, a 4096-node work budget, 100 levels), else `ParseRefused` |
 | Input echoed through an error | `ParseRefused` messages are fixed text |
 
 ## 14.6 Abuse-case tests

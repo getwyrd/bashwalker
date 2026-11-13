@@ -1334,9 +1334,14 @@ def _check_walk(tree: tree_sitter.Tree, walker: Walker) -> None:
 def walk(source: str, limits: Limits = DEFAULT_LIMITS) -> Walk:
     """Parse and walk ``source``. Raises ``ParseRefused`` when a fact cannot be proven
     (Rule 2) or a limit is exceeded (Rule 5); the size cap is checked before parsing."""
+    refused = ParseRefused(f"input over {limits.max_input_bytes // 1024} KiB")
+    # Every character is at least one byte: refuse an oversized string before encoding
+    # it, so a huge input costs no allocation.
+    if len(source) > limits.max_input_bytes:
+        raise refused
     data = source.encode("utf-8", "surrogatepass")
     if len(data) > limits.max_input_bytes:
-        raise ParseRefused(f"input over {limits.max_input_bytes // 1024} KiB")
+        raise refused
     tree = parse_source(data)
     layer = Walk(untrusted=untrusted_features(tree, data))
     walker = Walker(data, layer, limits)

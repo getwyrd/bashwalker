@@ -1570,8 +1570,24 @@ def _pure(text: str) -> bool:
     return bool(_PURE_ARITHMETIC.fullmatch(_INT_CONSTANT.sub(" ", text)))
 
 
+# What bash may expand in a word before it reads the word as arithmetic: `~` ($HOME, which
+# may carry a subscript), and a process substitution (`<(…)` becomes `/dev/fd/63`).
+_WORD_EXPANSIONS = ("~", "<(", ">(")
+
+
 def _index_pure(index: str) -> bool:
+    if any(e in index for e in _WORD_EXPANSIONS):
+        return False
     return index.strip() in ("@", "*") or _pure(index)
+
+
+def _word_pure(source: str) -> bool:
+    """Whether a word as written (`let 1+2`, a `[[ ]]` numeric operand) is literal numbers
+    once bash has expanded it: no expansion, glob, brace, tilde or process substitution."""
+    text, causes = lex_word(source)
+    if causes or "{" in source or any(e in source for e in _WORD_EXPANSIONS):
+        return False
+    return _pure(text)
 
 
 def _name_words(node: tree_sitter.Node) -> list[tuple[int, str, bool, str]]:
@@ -1816,11 +1832,17 @@ def _unproven_node(node: tree_sitter.Node) -> bool:
             for field_name in ("initializer", "condition", "update")
             for part in node.children_by_field_name(field_name)
         )
+    if kind == "test_command" and _node_text(node).startswith("[[") and any(
+        e in _node_text(node) for e in _WORD_EXPANSIONS
+    ) and any(
+        d.type == "test_operator" and _node_text(d) in _ARITHMETIC_TESTS for d in _iter_nodes(node)
+    ):
+        return True  # `[[ ~ -eq 0 ]]`: the grammar reads `~` as an operator, bash as $HOME
     if kind == "binary_expression" and _in_double_bracket(node) and any(
         c.type == "test_operator" and _node_text(c) in _ARITHMETIC_TESTS for c in node.children
     ):
         sides = [node.child_by_field_name(s) for s in ("left", "right")]
-        return any(side is not None and not _pure(lex_word(_node_text(side))[0]) for side in sides)
+        return any(side is not None and not _word_pure(_node_text(side)) for side in sides)
     if kind == "unary_expression" and any(
         c.type == "test_operator" and _node_text(c) == "-v" for c in node.children
     ):
@@ -1878,15 +1900,15 @@ def _unproven_node(node: tree_sitter.Node) -> bool:
             return _unproven_declaration(head, operands)
         rest = [(text, literal) for text, literal, _ in operands]
         if head == "let":
-            return any(not _pure(t) for t, _ in rest)
+            return any(not _word_pure(source) for _, _, source in operands)
         if head == "unset":
             return any(
                 not literal or not all(_index_pure(i) for i in _element_indexes(text))
                 for text, literal in rest
             )
         if head in ("test", "["):
-            if any(_may_split(_node_text(c)) for c in _word_children(node)[i + 1 :]):
-                return True  # `test $OP`: OP='-v a[X]' splits into two words
+            if any(_may_split(source) and not literal for _, literal, source in operands):
+                return True  # `test $OP`, `test "$@"`, `test {-v,a[X]}`, `test *`
             for k, (word, literal) in enumerate(rest[:-1]):
                 if word == "-v" or not literal:  # `test "$op" 'a[X]'`: $op may be -v
                     target, literal = rest[k + 1]
@@ -1920,9 +1942,15 @@ def _unproven_descriptor(redirect: tree_sitter.Node) -> bool:
     return match is None or not _index_pure(match.group(1))
 
 
+_MANY_WORDS = re.compile(r"\$[@*]|\$\{[@*!]|\[[@*]\]\}")
+
+
 def _may_split(source: str) -> bool:
-    """Whether a word as written has an unquoted expansion, which bash may split into
-    several words."""
+    """Whether a word as written may become several words: an unquoted expansion (split),
+    `"$@"`, `"${a[@]}"` or `${!p*}` even quoted, or an unquoted brace or glob (`{-v,a[X]}`,
+    `*`). Callers excuse a glob that ``_name_words`` judged an element name."""
+    if _MANY_WORDS.search(source):
+        return True
     quote = None
     k = 0
     while k < len(source):
@@ -1936,7 +1964,7 @@ def _may_split(source: str) -> bool:
             quote = None if quote == '"' else '"'
         elif quote is None and c == "'":
             quote = "'"
-        elif quote is None and c in "$`":
+        elif quote is None and c in "$`{*?[":
             return True
         k += 1
     return False

@@ -688,6 +688,8 @@ ARITHMETIC_SINKS = [
     # Twenty-fourth local review of #13.
     "time [[ -v a[X] ]]",
     "time [[ 1 && X -eq 0 ]]",
+    # Twenty-fifth local review of #13.
+    "time coproc let X; wait",
     'a=(-v "b[X]"); test "${a[@]:0}"',
 
     "REPLY=1; read -p x; echo $((REPLY))",

@@ -1962,8 +1962,8 @@ def _unproven_node(node: tree_sitter.Node) -> bool:
         if i == UNREADABLE:
             return True  # `command -"$opt" let X`: the command after it may be any
         sources = [_node_text(c) for c in _word_children(node)]
-        if sources and sources[0] == "coproc":
-            return True  # `coproc let X`: the walker does not look into coproc
+        if "coproc" in (sources[:1] + sources[i : i + 1] if i is not None else sources[:1]):
+            return True  # `coproc let X`, `time coproc let X`: the walker does not look into coproc
         if "[[" in sources:
             # `time [[ X -eq 0 ]]`, `time [[ -v a[X] ]]`: the grammar parses `[[` as a word
             # here and may split the conditional at `&&`, so it cannot be read.

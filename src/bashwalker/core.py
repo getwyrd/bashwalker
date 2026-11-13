@@ -1558,6 +1558,7 @@ _STATIC_NAME = re.compile(r"[A-Za-z_]\w*(?:\[[^\]]*\])?\+?=")
 # Builtins that write variables they are given.
 _VARIABLE_WRITERS = ("read", "printf", "mapfile", "readarray", "getopts", "wait")
 # `${!x*}`, `${!x@}`, `${!a[@]}`, `${!a[*]}` list names or keys and evaluate nothing.
+_COMPOUND_KEY = re.compile(r"(?:^|[\s(])\[([^\]]*)\]\+?=")
 _INDIRECT_LISTING = re.compile(r"\$\{![A-Za-z_]\w*(?:[*@]|\[[*@]\])\}$")
 
 
@@ -1806,6 +1807,10 @@ def _unproven_node(node: tree_sitter.Node) -> bool:
             if causes - {"glob"} or not all(_index_pure(i) for i in _element_indexes(text)):
                 return True  # `[[ -v $name ]]`, `[ -v 'a[x]' ]`
         return False
+    if kind == "array":
+        # `a=([X]=1)`: the keys of a compound assignment are indexes, which the grammar
+        # leaves as plain words.
+        return any(not _index_pure(lex_word(k)[0]) for k in _COMPOUND_KEY.findall(_node_text(node)))
     if kind == "subscript":
         index = node.child_by_field_name("index")
         return index is not None and not _index_pure(lex_word(_node_text(index))[0])
@@ -1877,12 +1882,13 @@ def _unproven_declaration(keyword: str, words: list[tuple[str, bool]]) -> bool:
         return False
     for text, literal in words:
         if text.startswith(("-", "+")):
-            if not literal or (keyword in _INTEGER_DECLARERS and "i" in text[1:]):
+            # `-i` adds the integer attribute; `+i` removes it.
+            if not literal or (keyword in _INTEGER_DECLARERS and text[0] == "-" and "i" in text[1:]):
                 return True  # `declare -i x`, `declare "$opt" x`
             continue
         if not literal and not _STATIC_NAME.match(text):
             return True  # `export "$name=$value"`: the name is not known
-        name = text.split("=", 1)[0]
+        name = text.split("=", 1)[0].removesuffix("+")  # `OPTIND+=…` appends
         if name.split("[", 1)[0] in _BASH_INTEGERS:
             return True  # `export OPTIND=$X`: bash evaluates the value
         if not all(_index_pure(i) for i in _element_indexes(name)):

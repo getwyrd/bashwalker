@@ -614,6 +614,11 @@ ARITHMETIC_SINKS = [
     # Ninth local review of #13.
     "a=$X; getopts -- ab OPTIND -a",
     "op=-v; test \"$op\" 'a[X]'",
+    # Tenth local review of #13.
+    'command export "OPTIND+=$X"',
+    "read -r X; a=([X]=1)",
+    "a+=([$X]=1)",
+    "declare -a a=([X]=1)",
     "REPLY=1; read -p x; echo $((REPLY))",
     "REPLY=1; read -r -t 1 -d '' ; echo $((REPLY))",
     "v=x; x=1; mapfile -t \"$v\"; echo $((x))",
@@ -668,6 +673,7 @@ def test_arithmetic_on_literal_numbers_is_trusted():
         "unset a[0] x; test -v x; [[ -v a[1] ]]",
         'test "$x" = y; [ -n "$x" ]; read a[0] <<<z',
         "~/bin/tool x; $'\\x72m' -f y",
+        "declare +i x; a=(1 2 [3]=4); a+=([5]=6)",
     ):
         walked = bashwalker.walk(command)
         assert not any("arithmetic" in f for f in walked.untrusted), (command, walked.untrusted)

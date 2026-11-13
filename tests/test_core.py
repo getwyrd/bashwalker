@@ -628,6 +628,7 @@ def test_arithmetic_on_literal_numbers_is_trusted():
         "REPLY=1; read x <<<foo",
         "((a[0] = 1)); test -v x; read 'a[0]' <<<z",
         "echo $((RANDOM % 6)) ${RANDOM}",
+        "export A=1 {fd}>x; export \"$x\"; declare -a {fd}>x",
     ):
         walked = bashwalker.walk(command)
         assert not any("arithmetic" in f for f in walked.untrusted), (command, walked.untrusted)

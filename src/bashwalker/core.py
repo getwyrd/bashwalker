@@ -1628,6 +1628,24 @@ def _lexed_head(node: tree_sitter.Node) -> int | None:
     return i if i < len(words) else None
 
 
+def _declaration_words(node: tree_sitter.Node) -> list[tuple[str, bool]]:
+    """A declaration's words, without a trailing `{fd}` that is the descriptor of a
+    redirect written right after it (`declare -a {fd}>x`)."""
+    words = _lexed(node)
+    after = node.next_sibling
+    last = node.named_children[-1] if node.named_children else None
+    if (
+        words
+        and last is not None
+        and after is not None
+        and after.type.endswith("_redirect")
+        and after.start_byte == last.end_byte
+        and _is_descriptor_token(_node_text(last))
+    ):
+        words = words[:-1]
+    return words
+
+
 def _integer_names(words: list[tuple[str, bool]]) -> set[str]:
     """The names a `declare`/`typeset`/`local` gives the integer attribute (`-i`)."""
     texts = [t for t, _ in words]
@@ -1645,7 +1663,9 @@ def _unproven_arithmetic(root: tree_sitter.Node) -> bool:
     for node in nodes:
         declared: list[tuple[str, bool]] | None = None
         if node.type == "declaration_command":
-            declared = _lexed(node)  # the keyword is not a named child
+            keyword = node.children[0].text.decode() if node.children else ""
+            if keyword in _INTEGER_DECLARERS:  # export/readonly cannot give -i
+                declared = _declaration_words(node)
         elif node.type == "command":
             lexed, i = _lexed(node), _lexed_head(node)
             if i is not None and i != UNREADABLE:

@@ -402,9 +402,11 @@ def _ansi_c(body: str) -> str:
 
     def one(m: re.Match) -> str:
         hex2, hex4, hex8, octal, control, other = m.groups()
-        for digits, base in ((hex2, 16), (hex4, 16), (hex8, 16), (octal, 8)):
+        if octal is not None:
+            return chr(int(octal, 8) & 0xFF)  # bash keeps the low byte (`\444` is `$`)
+        for digits in (hex2, hex4, hex8):
             if digits is not None:
-                code = int(digits, base)
+                code = int(digits, 16)
                 return chr(code) if code < 0x110000 else ""
         if control is not None:
             return chr(ord(control) & 0x1F)
@@ -1201,6 +1203,13 @@ def walk(source: str, limits: Limits = DEFAULT_LIMITS) -> Walk:
     walker = Walker(data, layer, limits)
     walker.visit(tree.root_node, Ctx(stdin=TERMINAL), 0)
     _check_walk(tree, walker)
+    if any(a.name in CODE_VARIABLES for a in layer.assignments) or any(
+        _NAMES_CODE_VARIABLE.match(w.text) for w in layer.words
+    ):
+        # bash runs these variables' values as code later (`PS4='$(id)'; set -x; :`),
+        # however they are set (`printf -v PS4`, `read PS4`, `declare`); the walker sees
+        # no command for it.
+        walker.note_untrusted("a variable bash runs as code (PS4, PROMPT_COMMAND, …) is set")
     if walker.operands:
         # Words after a redirect target with no simple command to take them
         # (`{ cat; } <a b`, a syntax error in bash): the tree is not bash's.
@@ -1218,6 +1227,13 @@ def walk(source: str, limits: Limits = DEFAULT_LIMITS) -> Walk:
 
 
 DECLARATION_BUILTINS = ("declare", "typeset", "local", "export", "readonly")
+# Variables whose value bash later runs or prompt-expands: the prompts (an interactive
+# shell expands PS0-PS2 and runs PROMPT_COMMAND; `set -x` expands PS4) and the startup
+# files a child shell sources.
+CODE_VARIABLES = ("PS0", "PS1", "PS2", "PS3", "PS4", "PROMPT_COMMAND", "BASH_ENV", "ENV")
+_NAMES_CODE_VARIABLE = re.compile(
+    r"(?:-[A-Za-z]*v)?(?:" + "|".join(CODE_VARIABLES) + r")(?:\[.*\])?(?:\+?=.*)?$", re.S
+)
 
 
 def _builtin_head(words: list[Word]) -> int | None:

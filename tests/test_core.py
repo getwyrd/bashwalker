@@ -61,6 +61,13 @@ UNTRUSTED = {
     "command unset 'a[$(touch m)0]'": "unset operand with a subscript",
     ": $(( '$(touch m)0' ))": "arithmetic context",
     "\"unset\" 'a[$(touch m)0]'": "unset operand with a subscript",
+    "printf -v $'a[\\444(touch m)0]' x": "subscript with a substitution",
+    "PS4='$(touch m)'; set -x; :": "bash runs as code",
+    "printf -v PS4 '%s' x; set -x; :": "bash runs as code",
+    "printf -vPS4 x": "bash runs as code",
+    "read PS4 <<<x": "bash runs as code",
+    "declare PROMPT_COMMAND=x": "bash runs as code",
+    "BASH_ENV=./e bash -c :": "bash runs as code",
     "declare a['$(touch m)0']=1": "subscript with a substitution",
     "a[$'\\x24(touch m)0']=1": "subscript with a substitution",
     "printf -v $'a[\\x24(touch m)0]' x": "subscript with a substitution",
@@ -150,6 +157,7 @@ def test_rule1_quoted_text_is_trusted():
         "[[ $x =~ ^a[0-9]+$ ]]",
         "a['key']=1; a[1]=2; m[\"$k\"]=3; printf '%s\\n' $'a[\\t]'",
         "echo $(( 1 + 2 )) $(( x * ${#y} ))",
+        "echo \"$PS1\" ${PS4:-x}; MYPS4=1",
     ):
         assert bashwalker.walk(command).untrusted == (), command
 

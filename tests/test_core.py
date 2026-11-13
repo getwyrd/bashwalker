@@ -489,6 +489,9 @@ def test_time_is_looked_through():
     assert bashwalker.command_head(walked.invocations[0]).text == "git"
     walked = bashwalker.walk("time time -p -- git push")
     assert bashwalker.command_head(walked.invocations[0]).text == "git"
+    # Prefix assignments may follow the reserved word (bash 5.3 runs `git` here).
+    walked = bashwalker.walk("time GIT_DIR=x A=$y git push")
+    assert bashwalker.command_head(walked.invocations[0]).text == "git"
     assert stdin_of("time time exec 0<<<'echo X'; bash")["bash"][0] == "unknown"
     # Only as the first, unquoted word: after `command`/`builtin` it is the program.
     # Its options too: `time "-p" git push` runs `-p` (bash 5.3).
@@ -669,6 +672,8 @@ ARITHMETIC_SINKS = [
     "OPT\\\nIND=$X",
     # Nineteenth local review of #13.
     's=IND; export OPT"$s"="$X"',
+    # Twentieth local review of #13.
+    'time D=1 export OPTIND="$X"',
     "REPLY=1; read -p x; echo $((REPLY))",
     "REPLY=1; read -r -t 1 -d '' ; echo $((REPLY))",
     "v=x; x=1; mapfile -t \"$v\"; echo $((x))",

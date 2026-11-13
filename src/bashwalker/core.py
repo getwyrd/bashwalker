@@ -1454,6 +1454,9 @@ def _builtin_head(words: list[Word], time_reserved: bool = True) -> int | None:
 UNREADABLE = -1
 
 
+_ASSIGNMENT_WORD = re.compile(r"[A-Za-z_]\w*(?:\[[^\]]*\])?\+?=")
+
+
 def _time_reserved(node: tree_sitter.Node) -> bool:
     """Whether a leading `time` in this command node is bash's reserved word: only when
     nothing (an assignment, a redirect) comes before it."""
@@ -1485,6 +1488,10 @@ def _skip_prefixes(words: list[Word], time_reserved: bool = True) -> int | None:
             i += 1
         if i < len(words) and words[i].source == "--":
             i += 1  # `time -- eval …`
+        # Assignments may follow, before the command (`time X=1 export …`); the grammar
+        # parses them as words.
+        while i < len(words) and _ASSIGNMENT_WORD.match(words[i].source):
+            i += 1
     while i < len(words) and words[i].literal and words[i].text in BUILTIN_PREFIXES:
         prefix = words[i].text
         i += 1

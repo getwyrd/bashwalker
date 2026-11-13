@@ -1,0 +1,4 @@
+# Lines on which the walker and an oracle (bash -n, shfmt, bash's reprint) disagree, with
+# the reason the difference is not a security problem. The differential test skips them.
+# Format:  "<line>" = "<reason>"
+[lines]

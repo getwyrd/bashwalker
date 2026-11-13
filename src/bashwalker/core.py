@@ -795,11 +795,18 @@ def _process_substitution(walker: Walker, node, ctx, depth, bound=()) -> None:
     _children(walker, node, inner, depth, bound)
 
 
+_NUMBER_DESCRIPTOR = re.compile(r"[0-9]+")
+# bash's `{varname}` redirect: an identifier, optionally with one non-empty subscript.
+_NAMED_DESCRIPTOR = re.compile(r"\{[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]+\])?\}")
+
+
 def _is_descriptor_token(text: str) -> bool:
-    """Whether a token written right before a redirect operator is its descriptor: all
-    digits (``0>&-``) or a ``{name}`` form (``{fd}>x``, ``{a[0]}>&-``). Anything else is an
-    ordinary word, as in bash (``echo secret>out`` keeps ``secret`` as an argument)."""
-    return text.isdigit() or (len(text) > 2 and text[0] == "{" and text[-1] == "}")
+    """Whether a token written right before a redirect operator is its descriptor, as
+    bash reads it: ASCII digits (``0>&-``) or ``{name}`` / ``{name[subscript]}``
+    (``{fd}>x``, ``{a[0]}>&-``). Anything else is an ordinary word, as in bash:
+    ``echo secret>out`` keeps ``secret``, ``rm ١>x`` keeps ``١`` (not an ASCII digit) and
+    ``rm {a,b}>x`` keeps ``{a,b}`` (brace expansion), all as arguments."""
+    return bool(_NUMBER_DESCRIPTOR.fullmatch(text) or _NAMED_DESCRIPTOR.fullmatch(text))
 
 
 def _descriptor(walker: Walker, node) -> str | None:

@@ -243,6 +243,12 @@ def test_words_next_to_redirects_are_kept():
     assert words("echo x}>f") == (["echo", "x}"], [(None, ">")])
     assert words("cat 0>&-") == (["cat"], [("0", ">&-")])
     assert words("echo {x}>f") == (["echo"], [("{x}", ">")])
+    # Only what bash itself takes as a descriptor (checked against bash 5.3): ASCII
+    # digits, `{name}` and `{name[subscript]}`. Every other token stays an argument.
+    for token in ("{fd}", "{_a1}", "{A9}", "{a[1]}", "{a[$i]}", "12"):
+        assert words(f"printf x {token}>f") == (["printf", "x"], [(token, ">")]), token
+    for token in ("١", "٣", "{a,b}", "{x-y}", "{1x}", "{}", "{a[]}", "{a[x]]}", "{a[1][2]}", "{é}"):
+        assert words(f"rm {token}>f") == (["rm", token], [(None, ">")]), token
     (invocation,) = bashwalker.walk("PATH=/tmp/evil >/dev/null").invocations
     assert [(a.name, a.role) for a in invocation.assignments] == [("PATH", "standalone")]
     assert [w.text for w in invocation.words] == [""]

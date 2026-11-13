@@ -380,6 +380,39 @@ def _bracket_redirects(node: tree_sitter.Node) -> list[tree_sitter.Node]:
 # (`printf -v 'a[$(id)0]' x`). Any such text is flagged, wherever it is; harmless text
 # such as `echo 'a[$(x)]'` is flagged too, which fails closed.
 _TEXT_KINDS = ("word", "raw_string", "string", "ansi_c_string", "concatenation")
+_ANSI_C_ESCAPE = re.compile(
+    r"\\(?:x([0-9A-Fa-f]{1,2})|u([0-9A-Fa-f]{1,4})|U([0-9A-Fa-f]{1,8})|([0-7]{1,3})|c(.)|(.))",
+    re.S,
+)
+_ANSI_C_SIMPLE = {"a": "\a", "b": "\b", "e": "\x1b", "E": "\x1b", "f": "\f", "n": "\n",
+                  "r": "\r", "t": "\t", "v": "\v"}
+
+
+def _ansi_c(body: str) -> str:
+    """The text of a ``$'…'`` body, as bash decodes its escapes."""
+
+    def one(m: re.Match) -> str:
+        hex2, hex4, hex8, octal, control, other = m.groups()
+        for digits, base in ((hex2, 16), (hex4, 16), (hex8, 16), (octal, 8)):
+            if digits is not None:
+                code = int(digits, base)
+                return chr(code) if code < 0x110000 else ""
+        if control is not None:
+            return chr(ord(control) & 0x1F)
+        return _ANSI_C_SIMPLE.get(other, other)
+
+    return _ANSI_C_ESCAPE.sub(one, body)
+
+
+def _decoded(node: tree_sitter.Node) -> str:
+    """A text node as bash reads it after quote removal, ``$'…'`` escapes decoded. The
+    patterns checked on it are ASCII, and a node may split an invalid UTF-8 sequence, so
+    it decodes leniently."""
+    if node.type == "ansi_c_string":
+        return _ansi_c(node.text.decode("utf-8", "replace")[2:-1])
+    if node.type == "concatenation":
+        return "".join(_decoded(child) for child in node.children)
+    return lex_word(node.text.decode("utf-8", "replace"))[0]
 # From any `[` on, not only to the next `]`: subscripts nest (`a[b[0]+$(id)]`).
 _HIDDEN_SUBSCRIPT = re.compile(r"\[.*?(?:\$\(|`|\$\{)", re.S)
 
@@ -427,12 +460,13 @@ def untrusted_features(tree: tree_sitter.Tree, source: bytes) -> tuple[str, ...]
             note("here-doc with <<-")
         if _bracket_redirects(node):
             note("'<' or '>' inside [ ], which bash reads as a redirection")
-        # The pattern is ASCII; a node may split an invalid UTF-8 sequence, so decode
-        # leniently.
-        if node.type in _TEXT_KINDS and _HIDDEN_SUBSCRIPT.search(
-            lex_word(node.text.decode("utf-8", "replace"))[0]
-        ):
+        if node.type in _TEXT_KINDS and _HIDDEN_SUBSCRIPT.search(_decoded(node)):
             note("quoted text holding a subscript with a substitution bash may evaluate")
+        if node.type == "subscript":
+            # The whole index, whose quoted pieces are separate nodes (`a['$(id)0']=1`).
+            index = node.child_by_field_name("index")
+            if index is not None and _HIDDEN_SUBSCRIPT.search("[" + _decoded(index)):
+                note("quoted text holding a subscript with a substitution bash may evaluate")
     single, quoted = _masks(root, len(source))
     lines: dict[int, int] = {}
     for start, _ in _heredoc_runs(source):

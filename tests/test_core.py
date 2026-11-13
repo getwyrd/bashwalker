@@ -55,6 +55,11 @@ UNTRUSTED = {
     "i='a[$(touch m)]'; echo $((i))": "subscript with a substitution",
     "printf -v 'a[b[0]+$(touch m)0]' x": "subscript with a substitution",
     "declare -a 'x[b[0]+$(touch m)0]=1'": "subscript with a substitution",
+    "a['$(touch m)0']=1": "subscript with a substitution",
+    "declare a['$(touch m)0']=1": "subscript with a substitution",
+    "a[$'\\x24(touch m)0']=1": "subscript with a substitution",
+    "printf -v $'a[\\x24(touch m)0]' x": "subscript with a substitution",
+    "printf -v a$'\\x5b\\044(touch m)0]' x": "subscript with a substitution",
 }
 
 # Inputs that, together, hold every named node kind of the pinned grammar.
@@ -138,6 +143,7 @@ def test_rule1_quoted_text_is_trusted():
         "echo ${a[0]} ${a[$i]} \"${a[$i]}\"",
         "grep 'a[bc]' f; awk '{c[$1]++}'; sed -n 's/[$]//p' f",
         "[[ $x =~ ^a[0-9]+$ ]]",
+        "a['key']=1; a[1]=2; m[\"$k\"]=3; printf '%s\\n' $'a[\\t]'",
     ):
         assert bashwalker.walk(command).untrusted == (), command
 

@@ -412,14 +412,56 @@ _SUBSTITUTION_TEXT = re.compile(r"\$\(|`|\$\{")
 
 
 def _holds_substitution_text(value: Word | None) -> bool:
-    """A value that holds a ``$`` or a backtick the tree did not parse as an expansion:
-    quoted (literal) text, or ``$'…'`` text that decodes to one. Pieces joined later can
-    spell a substitution (``x='a[$'; x+='(id)0]'``), and each piece of a ``$(`` split
-    this way has the ``$`` in one of them. Harmless text such as ``x='$5'`` is flagged
+    """A value that holds a ``$`` or a backtick as text, not as an expansion: pieces
+    joined later can spell a substitution (``x='a[$'; x+='(id)0]'``), and a ``$(`` split
+    this way leaves the ``$`` in one of them. Harmless text such as ``x='$5'`` is flagged
     too, which fails closed."""
-    if value is None or not ("$" in value.text or "`" in value.text):
-        return False
-    return value.literal or "$'" in value.source
+    return value is not None and _text_specials(value.source)
+
+
+# What may follow `$` to start an expansion; any other `$` is plain text.
+_EXPANSION_START = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_{([@*#?$!-'\"")
+
+
+def _text_specials(source: str) -> bool:
+    """Whether ``source`` yields a ``$`` or a backtick as plain text once bash removes
+    the quoting: inside single quotes, escaped with a backslash, decoded from ``$'…'``,
+    or a ``$`` that starts no expansion (``"a[$"``)."""
+    i, n = 0, len(source)
+    in_double = False
+    while i < n:
+        c = source[i]
+        if c == "\\":
+            if i + 1 < n and source[i + 1] in "$`":
+                return True
+            i += 2
+            continue
+        if not in_double and c == "'":
+            end = source.find("'", i + 1)
+            body = source[i + 1 :] if end < 0 else source[i + 1 : end]
+            if "$" in body or "`" in body:
+                return True
+            i = n if end < 0 else end + 1
+            continue
+        if not in_double and c == "$" and source[i + 1 : i + 2] == "'":
+            j = i + 2
+            while j < n and source[j] != "'":
+                j += 2 if source[j] == "\\" else 1
+            decoded = _ansi_c(source[i + 2 : j])
+            if "$" in decoded or "`" in decoded:
+                return True
+            i = j + 1
+            continue
+        if c == '"':
+            in_double = not in_double
+            i += 1
+            continue
+        if c == "$":
+            after = source[i + 1 : i + 2]
+            if not after or after not in _EXPANSION_START or (in_double and after in "'\""):
+                return True
+        i += 1
+    return False
 
 
 def _is_arithmetic(node: tree_sitter.Node) -> bool:
@@ -1001,7 +1043,10 @@ def _displays_only(words: list[Word], declarer: int) -> bool:
             return False
         if word.text == "--" or not word.text.startswith(("-", "+")):
             return False  # options end here (`declare PATH=/x -p` assigns)
-        if any(c in word.text[1:] for c in "pfF"):
+        # `-p`, `-f`, `-F` and `+p` display; `+f`/`+F` only turn an attribute off and
+        # still assign.
+        letters = "pfF" if word.text[0] == "-" else "p"
+        if any(c in word.text[1:] for c in letters):
             return True
     return False
 

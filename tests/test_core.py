@@ -83,6 +83,9 @@ UNTRUSTED = {
     "x='a['; x+='$(touch m)]'; : $((x))": "assigned text holding a substitution",
     "x=$'\\x24(touch m)'": "assigned text holding a substitution",
     "x='a[$'; x+='(touch m)0]'; : $((x))": "assigned text holding a substitution",
+    'x="a[$"; x+="(touch m)0]"; : $((x))': "assigned text holding a substitution",
+    'x="a[\\$"; x+="(touch m)0]"; : $((x))': "assigned text holding a substitution",
+    'x=a\\$; y=$x"(touch m)0]"; : $((y))': "assigned text holding a substitution",
     "o=p; command \"-$o\" exec </tmp/payload; bash": "prefix with an option",
     "shopt -s expand_aliases\nalias x='exec <<<payload'\nx\nbash": "alias definition",
     "command alias x=y": "alias definition",
@@ -181,6 +184,7 @@ def test_rule1_quoted_text_is_trusted():
         "echo $(( 1 + 2 )) $(( x * ${#y} ))",
         "echo \"$PS1\" ${PS4:-x}; MYPS4=1",
         "x=$(date); y=\"$(id -u)\"; z=`pwd`; w=${HOME}",
+        "x=$HOME; y=\"$x/b\"; z=\"${a[0]}$1$@$?\"",
     ):
         assert bashwalker.walk(command).untrusted == (), command
 
@@ -506,6 +510,9 @@ def test_declarations_behind_command_and_builtin():
     assert [a.name for a in bashwalker.walk("\"declare\" PATH=/x -p").assignments] == ["PATH"]
     assert [a.name for a in bashwalker.walk("declare -- -p PATH=/x").assignments] == ["PATH"]
     assert bashwalker.walk("\"declare\" +p 'PATH=/x'").assignments == []  # +p displays too
+    # `+f`/`+F` turn an attribute off and still assign (bash 5.3).
+    for option in ("+f", "+F"):
+        assert [a.name for a in bashwalker.walk(f"declare {option} PATH=/x").assignments] == ["PATH"]
     # An option the walker cannot read may assign: X stays, and `"$o"` is an operand it
     # cannot name.
     assert [a.name for a in bashwalker.walk("declare \"$o\" X=1").assignments] == ["X", ""]

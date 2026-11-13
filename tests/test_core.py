@@ -44,6 +44,15 @@ UNTRUSTED = {
     "unset 'a[$(touch m)0]'": "unset operand with a subscript",
     "unset >/dev/null 'm[$(touch m)]'": "unset operand with a subscript",
     "unset -v a[$i]": "unset operand with a subscript",
+    # Quoted text bash later reads as a variable reference evaluates its subscript
+    # (checked against bash 5.3; each runs `touch`).
+    "printf -v 'a[$(touch m)0]' x": "subscript with a substitution",
+    "read 'a[$(touch m)0]' <<<x": "subscript with a substitution",
+    "test -v 'a[$(touch m)0]'": "subscript with a substitution",
+    "[[ -v 'a[$(touch m)0]' ]]": "subscript with a substitution",
+    "let \"a[\\$(touch m)0]\"": "subscript with a substitution",
+    "declare -n r='a[$(touch m)0]'; r=1": "subscript with a substitution",
+    "i='a[$(touch m)]'; echo $((i))": "subscript with a substitution",
 }
 
 # Inputs that, together, hold every named node kind of the pinned grammar.
@@ -124,6 +133,9 @@ def test_rule1_quoted_text_is_trusted():
         "cat <<'E'\n`id`\nE",  # a quoted delimiter: bash runs nothing in the body
         "echo `id` $(id)",
         "declare -a 'x[1]=1' x[2]=2",
+        "echo ${a[0]} ${a[$i]} \"${a[$i]}\"",
+        "grep 'a[bc]' f; awk '{c[$1]++}'; sed -n 's/[$]//p' f",
+        "[[ $x =~ ^a[0-9]+$ ]]",
     ):
         assert bashwalker.walk(command).untrusted == (), command
 
@@ -349,6 +361,28 @@ def test_redirect_substitutions_read_the_earlier_redirects():
     inner = next(i for i in walked.invocations if i.words[0].text == "bash")
     assert (inner.stdin.kind, inner.stdin.value) == ("file", "/tmp/payload")
     assert stdin_of('>"$(bash)" cat')["bash"] == ("terminal", None)  # nothing before it
+
+
+def test_literal_stdin_read_by_a_later_redirect_is_unknown():
+    # bash 5.3: the substitution reads `#` before bash reads the rest.
+    command = "bash <<<'#echo X >&2' >\"$(read -r -N 1 s; printf /dev/null)\""
+    assert stdin_of(command)["bash"][0] == "unknown"
+    assert stdin_of("bash <<<'#echo X' >/dev/null")["bash"] == ("literal", "#echo X\n")
+    # A here-string after another redirect is a syntax error to the grammar; the here-doc
+    # forms parse. A substitution before the feed is applied reads the terminal; one in a
+    # redirect after it (which the grammar hangs under the here-doc) may read the feed.
+    before = "bash >\"$(printf /dev/null)\" <<'E'\nx\nE"
+    assert stdin_of(before)["bash"] == ("literal", "x\n")
+    after = "bash <<'E' >\"$(read -r -N 1 s; printf /dev/null)\"\n#echo X\nE"
+    assert stdin_of(after)["bash"][0] == "unknown"
+    assert stdin_of(after)["read"][0] == "unknown"
+    assert stdin_of("cat <<E > >(sudo tee /x)\nx\nE")["cat"] == ("literal", "x\n")
+
+
+def test_text_that_is_not_utf_8_is_walked():
+    # A lone surrogate (surrogatepass) can reach the parser as bytes that a node splits.
+    walked = bashwalker.walk("ls \udcff 'a[\udcff'")
+    assert [w.text for w in walked.invocations[0].words][:1] == ["ls"]
 
 
 def test_function_redirects_run_at_call_time():

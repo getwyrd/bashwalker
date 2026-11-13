@@ -375,6 +375,15 @@ def _bracket_redirects(node: tree_sitter.Node) -> list[tree_sitter.Node]:
     return [n for n in _iter_nodes(node) if not n.is_named and n.type in REDIRECT_OPERATORS]
 
 
+# Quoted or escaped text that bash may later read as a variable reference (`printf -v`,
+# `read`, `test -v`, `[[ -v ]]`, `let`, `local`, `declare -n`, `${!v}`): a subscript in
+# it is evaluated, and a substitution there runs although the tree never parsed it
+# (`printf -v 'a[$(id)0]' x`). Any such text is flagged, wherever it is; harmless text
+# such as `echo 'a[$(x)]'` is flagged too, which fails closed.
+_TEXT_KINDS = ("word", "raw_string", "string", "ansi_c_string", "concatenation")
+_HIDDEN_SUBSCRIPT = re.compile(r"\[[^\]]*(?:\$\(|`|\$\{)")
+
+
 def _quoted_heredoc(body: tree_sitter.Node) -> bool:
     """Whether a here-doc body's delimiter is quoted, so bash expands nothing in it."""
     redirect = body.parent
@@ -418,6 +427,12 @@ def untrusted_features(tree: tree_sitter.Tree, source: bytes) -> tuple[str, ...]
             note("here-doc with <<-")
         if _bracket_redirects(node):
             note("'<' or '>' inside [ ], which bash reads as a redirection")
+        # The pattern is ASCII; a node may split an invalid UTF-8 sequence, so decode
+        # leniently.
+        if node.type in _TEXT_KINDS and _HIDDEN_SUBSCRIPT.search(
+            lex_word(node.text.decode("utf-8", "replace"))[0]
+        ):
+            note("quoted text holding a subscript with a substitution bash may evaluate")
     single, quoted = _masks(root, len(source))
     lines: dict[int, int] = {}
     for start, _ in _heredoc_runs(source):
@@ -469,6 +484,8 @@ class Walker:
         # them under the redirect, bash passes them to the command. Keyed by the
         # redirect's id until the simple command that owns the redirect takes them.
         self.operands: dict[int, list[tuple[int, int]]] = {}
+        # Command and process substitutions walked so far (each may read stdin).
+        self.substitutions = 0
 
     def note_untrusted(self, feature: str) -> None:
         """Rule 1, for a feature only the walk can see."""
@@ -522,6 +539,14 @@ def _children(walker: Walker, node, ctx: Ctx, depth: int, bound: tuple = ()) -> 
         walker.visit(child, ctx, depth + 1)
 
 
+def _consumed(stdin: Stdin, substituted: bool) -> Stdin:
+    """A literal feed that a substitution in a later redirect may have read part of
+    (``bash <<<'#cmd' >"$(read -N 1 s)"`` gives ``bash`` ``cmd``) is no longer proven."""
+    if substituted and stdin.kind == "literal":
+        return UNKNOWN
+    return stdin
+
+
 def _apply_compound(walker: Walker, bound: tuple, ctx: Ctx, depth: int) -> Ctx:
     """Redirects on a compound command: record them, and let them set the stdin the
     commands inside inherit.
@@ -532,7 +557,10 @@ def _apply_compound(walker: Walker, bound: tuple, ctx: Ctx, depth: int) -> Ctx:
     stdin = ctx.stdin
     for node in bound:
         # Each redirect's substitutions read the stdin the earlier ones set.
-        for record in walker.visit(node, replace(ctx, stdin=stdin), depth + 1):
+        before = walker.substitutions
+        visited = walker.visit(node, replace(ctx, stdin=stdin), depth + 1)
+        stdin = _consumed(stdin, walker.substitutions != before)
+        for record in visited:
             stdin = _stdin_after(record, stdin)
     if stdin.kind == "literal":
         stdin = UNKNOWN
@@ -762,7 +790,10 @@ def _simple(walker: Walker, node, ctx: Ctx, depth: int, bound: tuple = ()) -> No
     records: list[Redirect] = []
     redirect_stdin = ctx.stdin
     for child in redirect_nodes:
-        for record in walker.visit(child, replace(ctx, stdin=redirect_stdin), depth + 1):
+        before = walker.substitutions
+        visited = walker.visit(child, replace(ctx, stdin=redirect_stdin), depth + 1)
+        redirect_stdin = _consumed(redirect_stdin, walker.substitutions != before)
+        for record in visited:
             records.append(record)
             redirect_stdin = _stdin_after(record, redirect_stdin)
     # Words the grammar put after a redirect target are the command's (`cat <a b`).
@@ -800,9 +831,7 @@ def _simple(walker: Walker, node, ctx: Ctx, depth: int, bound: tuple = ()) -> No
             if match and not _NUMBER_SUBSCRIPT.fullmatch(match.group(1)):
                 walker.note_untrusted("unset operand with a subscript bash evaluates")
 
-    stdin = ctx.stdin
-    for record in records:
-        stdin = _stdin_after(record, stdin)
+    stdin = redirect_stdin
     walker.layer.invocations.append(
         Invocation(
             kind=kind,
@@ -887,12 +916,15 @@ def _function(walker: Walker, node, ctx: Ctx, depth: int, bound: tuple = ()) -> 
 
 
 def _command_substitution(walker: Walker, node, ctx, depth, bound=()) -> None:
+    walker.substitutions += 1
     _children(walker, node, replace(ctx, role=None), depth, bound)
 
 
 def _process_substitution(walker: Walker, node, ctx, depth, bound=()) -> None:
     walker.layer.process_substitutions += 1
     opener = node.children[0].type if node.child_count else ""
+    if opener != ">(":
+        walker.substitutions += 1  # `>(…)` reads a pipe, not the shell's stdin
     inner = replace(ctx, role=None, stdin=PIPE if opener == ">(" else ctx.stdin)
     _children(walker, node, inner, depth, bound)
 
@@ -974,6 +1006,7 @@ def _heredoc_redirect(walker: Walker, node, ctx, depth, bound=()) -> list[Redire
     operator = _operator(node)
     delimiter = body = None
     nested: list[Redirect] = []
+    nested_substitutions = False
     piped = False
     for i, child in enumerate(node.children):
         fname = node.field_name_for_child(i)
@@ -988,7 +1021,13 @@ def _heredoc_redirect(walker: Walker, node, ctx, depth, bound=()) -> list[Redire
             body = child
             walker.visit(child, replace(ctx, role=None), depth + 1)
         elif child.type in REDIRECT_KINDS or fname == "redirect":
-            result = walker.visit(child, ctx, depth + 1)
+            # A redirect written after the here-doc, which tree-sitter hangs under it:
+            # bash performs it after the here-doc, so its substitutions may read the
+            # feed (`bash <<'E' >"$(read -N 1 s)"`). Their stdin is not proven, and the
+            # feed is not proven once they ran.
+            before = walker.substitutions
+            result = walker.visit(child, replace(ctx, stdin=UNKNOWN), depth + 1)
+            nested_substitutions |= walker.substitutions != before
             nested.extend(result if isinstance(result, list) else [])
         elif child.type in ("heredoc_end", "file_descriptor"):
             walker.visit(child, ctx, depth + 1)
@@ -1009,6 +1048,8 @@ def _heredoc_redirect(walker: Walker, node, ctx, depth, bound=()) -> list[Redire
             feed = Stdin("literal", text)
         elif _PLAIN_DELIMITER.fullmatch(delim) and not any(c in text for c in "$`\\"):
             feed = Stdin("literal", text)
+    if nested_substitutions:
+        feed = UNKNOWN
     record = Redirect(
         kind="heredoc_redirect",
         descriptor=descriptor,

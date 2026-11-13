@@ -1657,6 +1657,60 @@ _IMPLICIT_WRITES = {"read": ("REPLY",), "mapfile": ("MAPFILE",), "readarray": ("
 _ARGUMENT_OPTIONS = {"read": "adinNptu", "mapfile": "dnOsuCc", "readarray": "dnOsuCc"}
 
 
+# A declaration operand whose name is literal even if its value is not (`PATH="$PATH:/x"`).
+_STATIC_NAME = re.compile(r"[A-Za-z_]\w*(?:\[[^\]]*\])?\+?=")
+
+# Where each variable-writing builtin takes its destination: by option (the option's
+# argument is a name) and by operand position (``"all"`` = every operand, else the index
+# among operands). The other options that take an argument, whose argument is data.
+_DESTINATION_OPTIONS = {"read": "a", "printf": "v", "wait": "p", "mapfile": "", "readarray": "", "getopts": ""}
+_DESTINATION_OPERANDS = {"read": "all", "printf": None, "wait": None, "mapfile": 0, "readarray": 0, "getopts": 1}
+_DATA_OPTIONS = {"read": "dinNptu", "printf": "", "wait": "", "mapfile": "dnOsuCc", "readarray": "dnOsuCc", "getopts": ""}
+
+
+def _destinations(head: str, words: list[tuple[str, bool]]) -> tuple[set[str], bool]:
+    """The variables a `read`/`printf`/`wait`/`mapfile`/`getopts` call writes, and whether
+    a destination (or an option that could select one) is not literal."""
+    names: set[str] = set()
+    operands: list[tuple[str, bool]] = []
+    by_option = _DESTINATION_OPTIONS[head]
+    takes = by_option + _DATA_OPTIONS[head]
+    i = 0
+    while i < len(words):
+        text, literal = words[i]
+        if operands or text == "-" or not text.startswith("-"):
+            operands.append((text, literal))
+            i += 1
+            continue
+        if text == "--":
+            operands.extend(words[i + 1 :])
+            break
+        if not literal:
+            return names, True  # `read $opts x`: cannot tell options from names
+        for k, letter in enumerate(text[1:], start=1):
+            if letter not in takes:
+                continue
+            attached = text[k + 1 :]
+            if attached:
+                argument = (attached, True)
+            else:
+                i += 1
+                argument = words[i] if i < len(words) else ("", True)
+            if letter in by_option:
+                if not argument[1]:
+                    return names, True
+                names.add(argument[0])
+            break
+        i += 1
+    where = _DESTINATION_OPERANDS[head]
+    picked = operands if where == "all" else (operands[where : where + 1] if where is not None else [])
+    for text, literal in picked:
+        if not literal:
+            return names, True
+        names.add(text.split("[", 1)[0])
+    return names, False
+
+
 def _default_destination(head: str, operands: list[str]) -> bool:
     """Whether `read` / `mapfile` writes its default variable: no name operand and, for
     `read`, no `-a` array. Option arguments (attached or separate) are not names."""
@@ -1710,8 +1764,11 @@ def _unproven_arithmetic(root: tree_sitter.Node) -> bool:
 
     def declaration(words: list[tuple[str, bool]], node: tree_sitter.Node) -> None:
         nonlocal opaque
-        if any(not literal for _, literal in words):
-            opaque = True  # `declare "$n"=x`, `declare $opts x`: what it writes is unknown
+        for text, literal in words:
+            # A non-literal option or name hides what it declares (`declare "$n"=x`,
+            # `declare $opts x`); a non-literal value does not (`export PATH="$PATH:/x"`).
+            if not literal and not _STATIC_NAME.match(text):
+                opaque = True
         texts = [t for t, _ in words]
         options = "".join(w[1:] for w in texts if w.startswith("-"))
         names = [w.split("=", 1)[0].split("[", 1)[0] for w in texts if not w.startswith(("-", "+"))]
@@ -1819,8 +1876,11 @@ def _unproven_arithmetic(root: tree_sitter.Node) -> bool:
             if not lexed[i][1] or head in SHELL_RUNNERS or head in CODE_LATER:
                 # `eval 'x=…'`, `source f`, `$cmd`, an alias: may write any variable.
                 opaque = True
-            if head in _VARIABLE_WRITERS and any(not literal for _, literal in lexed[i + 1 :]):
-                opaque = True  # `read "$v"`: writes a variable the walker cannot name
+            if head in _VARIABLE_WRITERS:
+                destinations, dynamic = _destinations(head, lexed[i + 1 :])
+                other_writes.update(destinations)
+                if dynamic:
+                    opaque = True  # `read "$v"`: writes a variable the walker cannot name
             if head in _IMPLICIT_WRITES and _default_destination(head, rest):
                 other_writes.update(_IMPLICIT_WRITES[head])
             if head == "getopts":
@@ -1828,14 +1888,6 @@ def _unproven_arithmetic(root: tree_sitter.Node) -> bool:
             if head == "let":
                 for word in rest:
                     arithmetic(word, node)
-            elif head in _VARIABLE_WRITERS:
-                # `read x`, `printf -v x`, `printf -vx`: a name may be attached to its
-                # option letters, so every suffix of them counts as a name written.
-                for word in rest:
-                    body = word.lstrip("-")
-                    for k in range(len(body) if word.startswith("-") else 1):
-                        if re.fullmatch(r"[A-Za-z_]\w*", body[k:]):
-                            other_writes.add(body[k:])
             elif head == "unset":
                 for word in rest:
                     base, _, tail = word.partition("[")

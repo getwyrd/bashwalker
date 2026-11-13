@@ -564,6 +564,8 @@ ARITHMETIC_SINKS = [
     "x=1; time -- eval 'x=$X'; echo $((x))",
     "REPLY=1; read -p x; echo $((REPLY))",
     "REPLY=1; read -r -t 1 -d '' ; echo $((REPLY))",
+    "v=x; x=1; mapfile -t \"$v\"; echo $((x))",
+    "x=1; read -ra x; echo $((x))",
 ]
 
 
@@ -573,6 +575,8 @@ ARITHMETIC_UNPROVEN = [
     "f() { x=1; }; f; echo $((x))",
     "printf -vx %s 1; echo $((x))",
     "for x in 1; do :; done; echo $((x))",
+    "v=x; x=1; printf -v \"$v\" %s 1; echo $((x))",
+    "x=1; getopts ab x; echo $((x))",
 ]
 
 
@@ -602,6 +606,9 @@ def test_arithmetic_on_proven_numbers_is_trusted():
         "REPLY=1; read x <<<foo; echo $((REPLY))",
         "REPLY=1; read -r -a arr <<<foo; echo $((REPLY))",
         "MAPFILE=1; mapfile -t a <<<foo; echo $((MAPFILE))",
+        'export PATH="$PATH:/x"; y=1; echo $((y))',
+        "x=1; printf '%s' \"$HOME\"; echo $((x))",
+        "x=1; read -p \"$prompt\" y; echo $((x))",
     ):
         walked = bashwalker.walk(command)
         assert not any("arithmetic" in f for f in walked.untrusted), (command, walked.untrusted)

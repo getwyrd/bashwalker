@@ -138,10 +138,13 @@ def bash_reprint(line: str) -> str | None:
     Raises ``Escaped`` when the reprint is not exactly the wrapped body."""
     nonce = "n" + secrets.token_hex(8)
     script = f"f() {{ : {nonce}_start;\n{line}\n: {nonce}_end;\n}}\ndeclare -F\ndeclare -f f\n"
+    bash = _tool("bash")
     argv = [
         _tool("bwrap"), "--ro-bind", "/", "/", "--tmpfs", "/tmp", "--dev", "/dev",
-        "--proc", "/proc", "--unshare-all", "--die-with-parent", "--chdir", "/tmp",
-        _tool("bash"), "--norc", "--noprofile", "-c", script,
+        "--proc", "/proc",
+        "--ro-bind", bash, bash,  # also when bash lives under /tmp, which the tmpfs hides
+        "--unshare-all", "--die-with-parent", "--chdir", "/tmp",
+        bash, "--norc", "--noprofile", "-c", script,
     ]
     try:
         result = _run(argv)

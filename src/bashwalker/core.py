@@ -406,9 +406,12 @@ _SUBSTITUTION_TEXT = re.compile(r"\$\(|`|\$\{")
 
 
 def _holds_substitution_text(value: Word | None) -> bool:
-    """A value whose text spells ``$(``, a backtick or ``${`` that the tree did not parse
-    as one: quoted (literal) text, or ``$'…'`` text that decodes to it."""
-    if value is None or not _SUBSTITUTION_TEXT.search(value.text):
+    """A value that holds a ``$`` or a backtick the tree did not parse as an expansion:
+    quoted (literal) text, or ``$'…'`` text that decodes to one. Pieces joined later can
+    spell a substitution (``x='a[$'; x+='(id)0]'``), and each piece of a ``$(`` split
+    this way has the ``$`` in one of them. Harmless text such as ``x='$5'`` is flagged
+    too, which fails closed."""
+    if value is None or not ("$" in value.text or "`" in value.text):
         return False
     return value.literal or "$'" in value.source
 
@@ -900,10 +903,20 @@ def _simple(walker: Walker, node, ctx: Ctx, depth: int, bound: tuple = ()) -> No
     # builtins themselves, which the grammar parses as an ordinary command: look through
     # the prefixes and the quoting.
     head = _builtin_head(words) if kind == "command" else None
-    if head is not None and words[head].text in DECLARATION_BUILTINS:
+    if kind == "command" and _skip_prefixes(words) == UNREADABLE:
+        walker.note_untrusted("command or builtin prefix with an option the walker cannot read")
+    declarer = 0 if kind == "declaration" else head
+    display_only = declarer is not None and _displays_only(words, declarer)
+    if head is not None and words[head].text in DECLARATION_BUILTINS and not display_only:
         for word in words[head + 1 :]:
             _declaration_operand(walker, word.source, assignments)
-    declarer = 0 if kind == "declaration" else head
+    if display_only and kind == "declaration":
+        # `declare -p NAME=x` only displays; it assigns nothing.
+        dropped = [a for a in assignments if a.role == "declaration"]
+        assignments[:] = [a for a in assignments if a.role != "declaration"]
+        walker.layer.assignments = [
+            a for a in walker.layer.assignments if not any(a is d for d in dropped)
+        ]
     if declarer is not None and words[declarer].text in NAMEREF_BUILTINS:
         for word in words[declarer + 1 :]:
             option = word.text.startswith("-")
@@ -956,6 +969,21 @@ def _declared(source: str) -> tuple[Assignment | None, bool]:
     if word.literal:
         return None, False
     return Assignment(name="", value=None, role="declaration"), False
+
+
+def _displays_only(words: list[Word], declarer: int) -> bool:
+    """``declare``/``typeset``/``local`` with ``-p``, ``-f`` or ``-F`` display and assign
+    nothing. An option the walker cannot read may assign, so it does not count."""
+    if words[declarer].text not in NAMEREF_BUILTINS:
+        return False
+    for word in words[declarer + 1 :]:
+        if not word.text.startswith("-"):
+            continue
+        if not word.literal:
+            return False
+        if any(c in word.text[1:] for c in "pfF"):
+            return True
+    return False
 
 
 def _declaration_operand(walker: Walker, source: str, assignments: list) -> None:
@@ -1296,15 +1324,21 @@ def _builtin_head(words: list[Word]) -> int | None:
     """The index of the literal word bash runs as the command, after any ``command`` /
     ``builtin`` prefixes and their options; None when that word is not literal."""
     i = _skip_prefixes(words)
-    if i is None or i >= len(words) or not words[i].literal or not words[i].source:
+    if i is None or i == UNREADABLE or i >= len(words) or not words[i].literal:
+        return None
+    if not words[i].source:
         return None
     return i
 
 
+UNREADABLE = -1
+
+
 def _skip_prefixes(words: list[Word]) -> int | None:
-    """The index after any ``command`` / ``builtin`` prefixes and their options, or None
-    when a prefix only looks a command up (``command -v``/``-V`` runs nothing) or has an
-    option the walker cannot read."""
+    """The index after any ``command`` / ``builtin`` prefixes and their options; None when
+    a prefix only looks a command up (``command -v``/``-V`` runs nothing); ``UNREADABLE``
+    when a prefix has an option the walker cannot read (``command "-$o" exec <x`` may run
+    ``exec``)."""
     i = 0
     while i < len(words) and words[i].literal and words[i].text in BUILTIN_PREFIXES:
         prefix = words[i].text
@@ -1312,7 +1346,7 @@ def _skip_prefixes(words: list[Word]) -> int | None:
         while i < len(words) and words[i].text.startswith("-"):
             option = words[i]
             if not option.literal:
-                return None
+                return UNREADABLE
             if option.text == "--":
                 i += 1
                 break
@@ -1327,6 +1361,10 @@ def command_head(invocation: Invocation) -> Word | None:
     when there is no command word."""
     words = list(invocation.words)
     i = _skip_prefixes(words)
+    if i == UNREADABLE:
+        # An option the walker cannot read: what runs is not known, so the head is that
+        # non-literal word, which callers treat as the worst case.
+        return next(w for w in words if not w.literal)
     if i is None or i >= len(words) or not words[i].source:
         return None
     return words[i]

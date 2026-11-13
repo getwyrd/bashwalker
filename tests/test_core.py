@@ -82,6 +82,8 @@ UNTRUSTED = {
     "read -aPS4 <<<x; set -x; :": "bash runs as code",
     "x='a['; x+='$(touch m)]'; : $((x))": "assigned text holding a substitution",
     "x=$'\\x24(touch m)'": "assigned text holding a substitution",
+    "x='a[$'; x+='(touch m)0]'; : $((x))": "assigned text holding a substitution",
+    "o=p; command \"-$o\" exec </tmp/payload; bash": "prefix with an option",
     "declare a['$(touch m)0']=1": "subscript with a substitution",
     "a[$'\\x24(touch m)0']=1": "subscript with a substitution",
     "printf -v $'a[\\x24(touch m)0]' x": "subscript with a substitution",
@@ -487,6 +489,13 @@ def test_declarations_behind_command_and_builtin():
         assert bashwalker.command_head(walked.invocations[0]) is None, command
     assert bashwalker.command_head(bashwalker.walk("command -p ls").invocations[0]).text == "ls"
     assert not bashwalker.walk("export -n X").untrusted  # removes the export: no nameref
+    # `-p`, `-f`, `-F` only display (bash 5.3 leaves PATH alone).
+    for command in ("declare -p PATH=/x", "\"declare\" -p 'PATH=/x'", "typeset -f f", "local -Fp X=1"):
+        assert bashwalker.walk(command).assignments == [], command
+    assert [a.name for a in bashwalker.walk("declare -x X=1").assignments] == ["X"]
+    # An option the walker cannot read may assign: X stays, and `"$o"` is an operand it
+    # cannot name.
+    assert [a.name for a in bashwalker.walk("declare \"$o\" X=1").assignments] == ["X", ""]
 
 
 def test_declaration_operands():

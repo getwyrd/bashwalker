@@ -1546,7 +1546,7 @@ def may_rewire_stdin(invocation: Invocation) -> bool:
 # bash's own integer variables: an assignment to one evaluates the value as arithmetic.
 _BASH_INTEGERS = frozenset(
     ("RANDOM", "SRANDOM", "LINENO", "SECONDS", "EPOCHSECONDS", "BASHPID", "PPID", "UID", "EUID",
-     "BASH_SUBSHELL", "OPTIND", "HISTCMD")
+     "BASH_SUBSHELL", "OPTIND", "MAILCHECK", "HISTCMD")
 )
 _INT_CONSTANT = re.compile(r"(?<![\w$])(?:0[xX][0-9A-Fa-f]+|[0-9]+#[0-9A-Za-z@_]+|[0-9]+)(?![\w#])")
 _PURE_ARITHMETIC = re.compile(r"[\s0-9+\-*/%<>=!&|^~?:,()]*")
@@ -1877,11 +1877,13 @@ def _unproven_node(node: tree_sitter.Node) -> bool:
     if kind == "declaration_command":
         keyword = node.children[0].text.decode() if node.children else ""
         sources = [_node_text(c) for c in _word_children(node)]
-        return _unproven_declaration(keyword, [(t, lit, src) for (t, lit), src in zip(_lexed(node), sources)])
+        words = [(t, lit, src) for (t, lit), src in zip(_lexed(node), sources)]
+        return _unproven_declaration(keyword, words + _words_after_redirect(node))
     if kind == "unset_command":
         return any(
             not literal or not all(_index_pure(i) for i in _element_indexes(text))
-            for _, text, literal, _ in _name_words(node)
+            for text, literal in [(t, lit) for _, t, lit, _ in _name_words(node)]
+            + [(t, lit) for t, lit, _ in _words_after_redirect(node)]
         )
     if kind.endswith("_redirect") and _unproven_descriptor(node):
         return True  # `: {a[X]}>x`: bash evaluates the element's index
@@ -1889,13 +1891,14 @@ def _unproven_node(node: tree_sitter.Node) -> bool:
         lexed, i = _lexed(node), _lexed_head(node)
         if i == UNREADABLE:
             return True  # `command -"$opt" let X`: the command after it may be any
+        extra = _words_after_redirect(node)
         if i is None:
-            return False
+            return bool(extra)  # `command >/dev/null let X`: the command is under the redirect
         head = lexed[i][0]
         # A non-literal command word (`"$cmd" X`) may be any command, `eval` and `let`
         # included: like `eval`, it is opaque to the walker, and callers treat it so
         # (`may_rewire_stdin` is true for it).
-        operands = _operands(node, i)
+        operands = _operands(node, i) + extra
         if head in _DECLARERS:
             return _unproven_declaration(head, operands)
         rest = [(text, literal) for text, literal, _ in operands]
@@ -1943,6 +1946,26 @@ def _unproven_descriptor(redirect: tree_sitter.Node) -> bool:
 
 
 _MANY_WORDS = re.compile(r"\$[@*]|\$\{[@*!]|\[[@*]\]\}")
+
+
+def _words_after_redirect(node: tree_sitter.Node) -> list[tuple[str, bool, str]]:
+    """The words the grammar hung under the redirects of the statement ``node`` is the
+    body of (`let >/dev/null X`, `let <<E X`): bash passes every word after a redirect's
+    target to the command. Each is (text, literal, source), in source order."""
+    parent = node.parent
+    if parent is None or parent.type != "redirected_statement" or parent.child_by_field_name("body") != node:
+        return []
+    pieces = []
+    for redirect in parent.children_by_field_name("redirect"):
+        pieces += redirect.children_by_field_name("destination")[1:]
+        pieces += redirect.children_by_field_name("argument")
+    words = []
+    for piece in sorted(pieces, key=lambda n: n.start_byte):
+        source = _node_text(piece)
+        text, causes = lex_word(source)
+        literal = not causes or (causes == {"glob"} and bool(_ELEMENT_FORM.fullmatch(text)))
+        words.append((text, literal, source))
+    return words
 
 
 def _may_split(source: str) -> bool:

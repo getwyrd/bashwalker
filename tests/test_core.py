@@ -651,6 +651,12 @@ ARITHMETIC_SINKS = [
     "HOME=X; [[ ~ -eq 0 ]]",
     "test {-v,a[X]}",
     'set -- -v "a[X]"; test "$@"',
+    # Fifteenth local review of #13.
+    "let >/dev/null X",
+    "declare >/dev/null -i x=X",
+    "read </dev/null RANDOM <<<X",
+    "test >/dev/null -v a[X]",
+    "command >/dev/null let X",
     "REPLY=1; read -p x; echo $((REPLY))",
     "REPLY=1; read -r -t 1 -d '' ; echo $((REPLY))",
     "v=x; x=1; mapfile -t \"$v\"; echo $((x))",

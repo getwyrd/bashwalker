@@ -75,8 +75,16 @@ def build(version: str, prefix: str) -> None:
         src = os.path.join(work, f"bash-{version}")
         for patch in patches:
             subprocess.run(["patch", "-s", "-p0"], input=patch, cwd=src, check=True)
-        subprocess.run(["./configure", "--quiet", f"--prefix={os.path.abspath(prefix)}"],
-                       cwd=src, check=True)
+        # GCC 15 defaults to C23 and, since GCC 14, rejects old C (implicit declarations,
+        # pre-ANSI definitions) that bash 5.1 and 5.2 still use (nl-shell#202). Build as C17
+        # and keep those diagnostics warnings, as older compilers did.
+        cflags = " ".join(
+            ["-O2", "-std=gnu17"]
+            + [f"-Wno-error={w}" for w in ("implicit-function-declaration", "implicit-int",
+                                           "incompatible-pointer-types", "int-conversion")]
+        )
+        subprocess.run(["./configure", "--quiet", f"--prefix={os.path.abspath(prefix)}",
+                        f"CFLAGS={cflags}"], cwd=src, check=True)
         subprocess.run(["make", "-s", f"-j{os.cpu_count() or 1}"], cwd=src, check=True)
         subprocess.run(["make", "-s", "install"], cwd=src, check=True)
 

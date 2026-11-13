@@ -1546,13 +1546,15 @@ def may_rewire_stdin(invocation: Invocation) -> bool:
 
 # bash's own numeric variables.
 _SAFE_NUMERIC = frozenset(
-    ("RANDOM", "SRANDOM", "LINENO", "SECONDS", "EPOCHSECONDS", "BASHPID", "PPID", "UID", "EUID")
+    ("RANDOM", "SRANDOM", "LINENO", "SECONDS", "EPOCHSECONDS", "BASHPID", "PPID", "UID", "EUID",
+     "BASH_SUBSHELL", "OPTIND", "HISTCMD")
 )
 _INT_CONSTANT = re.compile(r"(?<![\w$])(?:0[xX][0-9A-Fa-f]+|[0-9]+#[0-9A-Za-z@_]+|[0-9]+)(?![\w#])")
 # `$x`, `${x}`, `${!x}` read a value; `${#x}` is a length, always a number.
 _REFERENCE = re.compile(r"\$\{?!?([A-Za-z_][A-Za-z0-9_]*)")
 _LENGTH = re.compile(r"\$\{#[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?\}")
-_POSITIONAL = re.compile(r"\$\{?[#!]?[0-9@*]")
+# Arguments, and `$-` / `$_`, whose text bash would read as arithmetic.
+_POSITIONAL = re.compile(r"\$\{?[#!]?[0-9@*]|\$\{?[-_](?![A-Za-z0-9_])")
 _COMMAND_OUTPUT = re.compile(r"\$\((?!\()|`")
 _BARE_NAME = re.compile(r"(?<![\w$#])([A-Za-z_][A-Za-z0-9_]*)")
 # A plain `name=` only assigns (`name+=` and the like also read).
@@ -1561,16 +1563,14 @@ _ARITHMETIC_TESTS = ("-eq", "-ne", "-lt", "-le", "-gt", "-ge")
 _INTEGER_DECLARERS = ("declare", "typeset", "local")
 # `${s:off:len}`, also `${!s:…}`, `${@:…}`, `${*:…}`, `${10:…}`.
 _SUBSTRING = re.compile(
-    r"\$\{!?(?:[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?|[0-9]+|[@*])\s*:(?![-=?+])(.*)\}$", re.S
+    r"\$\{!?(?:[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?|[0-9]+|[-@*?$!_#])\s*:(?![-=?+])(.*)\}$", re.S
 )
 # `a[i]=` inside arithmetic writes an element: only its index is read.
 _ELEMENT_ASSIGNMENT = re.compile(r"(?<![\w$])[A-Za-z_]\w*\[([^\]]*)\]\s*=(?!=)")
 _ARRAY_REFERENCE = re.compile(r"[A-Za-z_]\w*\[([^\]]*)\]")
 # A declaration operand whose name is literal even if its value is not (`PATH="$PATH:/x"`).
 _STATIC_NAME = re.compile(r"[A-Za-z_]\w*(?:\[[^\]]*\])?\+?=")
-# Builtins whose arguments can name an array element (`read 'a[x]'`, `test -v 'a[x]'`),
-# and builtins that write variables (an integer variable evaluates what they write).
-_ARRAY_ARGUMENTS = ("read", "printf", "mapfile", "readarray", "getopts", "wait", "test", "[")
+# Builtins that write variables (an integer variable evaluates what they write).
 _VARIABLE_WRITERS = ("read", "printf", "mapfile", "readarray", "getopts", "wait")
 
 
@@ -1602,26 +1602,45 @@ def _lexed(node: tree_sitter.Node) -> list[tuple[str, bool]]:
     """A command's words (not its redirects or prefix assignments) after quote removal,
     each with whether it is literal."""
     out = []
-    for child in node.named_children:
-        if child.type.endswith("_redirect"):
-            continue
-        if child.type == "variable_assignment" and node.type == "command":
-            continue  # a prefix assignment (`x=1 cmd`), not a word of the command
+    for child in _word_children(node):
         text, causes = lex_word(_node_text(child))
         out.append((text, not causes))
     return out
+
+
+def _word_children(node: tree_sitter.Node) -> list[tree_sitter.Node]:
+    """The children of a command or declaration that are its words: not redirects, not a
+    redirect's `{fd}`, not prefix assignments (`x=1 cmd`)."""
+    return [
+        child
+        for child in node.named_children
+        if not child.type.endswith("_redirect")
+        and not _redirect_descriptor(child, node)
+        and not (child.type == "variable_assignment" and node.type == "command")
+    ]
+
+
+def _redirect_descriptor(child: tree_sitter.Node, node: tree_sitter.Node) -> bool:
+    """Whether ``child`` is the `{fd}` or number of a redirect written right after it,
+    which the grammar leaves as a word (`unset B {fd}>x`, `declare -a {fd}>x`)."""
+    # The redirect may hang on a statement further out (`x || unset B {fd}>x`): take the
+    # next node at any level; it must start exactly where the token ends.
+    after, current = child.next_sibling, node
+    while after is None and current is not None:
+        after, current = current.next_sibling, current.parent
+    return (
+        after is not None
+        and after.type.endswith("_redirect")
+        and after.start_byte == child.end_byte
+        and _is_descriptor_token(_node_text(child))
+    )
 
 
 def _lexed_head(node: tree_sitter.Node) -> int | None:
     """``_skip_prefixes`` for a command node's words (as ``_lexed`` lists them): the index
     of the word that runs, None when nothing runs (no word, or `command -v`/`-V`),
     ``UNREADABLE`` when a prefix option cannot be read."""
-    words = [
-        make_word(_node_text(c))
-        for c in node.named_children
-        if not c.type.endswith("_redirect")
-        and not (c.type == "variable_assignment" and node.type == "command")
-    ]
+    words = [make_word(_node_text(c)) for c in _word_children(node)]
     i = _skip_prefixes(words)
     if i is None or i == UNREADABLE:
         return i
@@ -1629,21 +1648,8 @@ def _lexed_head(node: tree_sitter.Node) -> int | None:
 
 
 def _declaration_words(node: tree_sitter.Node) -> list[tuple[str, bool]]:
-    """A declaration's words, without a trailing `{fd}` that is the descriptor of a
-    redirect written right after it (`declare -a {fd}>x`)."""
-    words = _lexed(node)
-    after = node.next_sibling
-    last = node.named_children[-1] if node.named_children else None
-    if (
-        words
-        and last is not None
-        and after is not None
-        and after.type.endswith("_redirect")
-        and after.start_byte == last.end_byte
-        and _is_descriptor_token(_node_text(last))
-    ):
-        words = words[:-1]
-    return words
+    """A declaration's words (``_lexed`` drops a redirect's `{fd}`)."""
+    return _lexed(node)
 
 
 def _integer_names(words: list[tuple[str, bool]]) -> set[str]:
@@ -1659,27 +1665,65 @@ def _unproven_arithmetic(root: tree_sitter.Node) -> bool:
     texts: list[str] = []
     nodes = list(_iter_nodes(root))
     integers: set[str] = set()  # declared -i anywhere: their assignments are arithmetic
-    writers = False  # a builtin or loop writes a variable it names
+    written: set[str] = set()  # names a builtin, loop, declaration, assignment or unset writes
+    loaded: set[str] = set()  # names a builtin or loop writes (not `x=…`)
+    dynamic_write = False  # a write or unset whose name the walker cannot read
+    dynamic_declaration = False  # export/readonly with an operand it cannot read
+    destinations: list[tuple[str, tree_sitter.Node]] = []  # element names to index
     for node in nodes:
         declared: list[tuple[str, bool]] | None = None
         if node.type == "declaration_command":
             keyword = node.children[0].text.decode() if node.children else ""
+            words = _declaration_words(node)
+            written |= {t.split("=", 1)[0].split("[", 1)[0] for t, _ in words if not t.startswith(("-", "+"))}
             if keyword in _INTEGER_DECLARERS:  # export/readonly cannot give -i
-                declared = _declaration_words(node)
+                declared = words
+            elif any(not lit and not _STATIC_NAME.match(t) for t, lit in words):
+                dynamic_declaration = True  # `export "$n=$v"`: maybe an integer's name
         elif node.type == "command":
             lexed, i = _lexed(node), _lexed_head(node)
-            if i is not None and i != UNREADABLE:
-                if lexed[i][0] in _INTEGER_DECLARERS:
-                    declared = lexed[i + 1 :]
-                writers = writers or lexed[i][0] in _VARIABLE_WRITERS
+            if i is None or i == UNREADABLE:
+                continue
+            head = lexed[i][0]
+            if head in _INTEGER_DECLARERS:
+                declared = lexed[i + 1 :]
+            elif head in _VARIABLE_WRITERS:
+                names, dynamic = _destinations(head, lexed[i + 1 :])
+                dynamic_write = dynamic_write or dynamic
+                for name in names:
+                    written.add(name.split("[", 1)[0])
+                    loaded.add(name.split("[", 1)[0])
+                    destinations.append((name, node))
+            elif head == "unset":
+                for text, literal in lexed[i + 1 :]:
+                    if not literal:
+                        dynamic_write = True
+                    written.add(text.split("[", 1)[0])
+        elif node.type == "unset_command":
+            for text, literal in _lexed(node):
+                dynamic_write = dynamic_write or not literal
+                written.add(text.split("[", 1)[0])
         elif node.type == "for_statement":
-            writers = True  # `for x in …` and `select x in …`
+            variable = node.child_by_field_name("variable")
+            if variable is not None:
+                written.add(_node_text(variable))  # `for x in …`, `select x in …`
+                loaded.add(_node_text(variable))
+        elif node.type == "variable_assignment":
+            name_node = node.child_by_field_name("name")
+            if name_node is not None:
+                written.add(_node_text(name_node).split("[", 1)[0])
         if declared is not None:
             if any(not lit and not _STATIC_NAME.match(t) for t, lit in declared):
                 return True  # `declare "$opt" x`: it may give -i, and then x=… is arithmetic
             integers |= _integer_names(declared)
-    if integers and writers:
-        return True  # `declare -i x; read x`: what the builtin writes is evaluated
+    if dynamic_write:
+        # `read "$1"`, `unset "$x"`: the name may be an element (`a[x]`) whose index bash
+        # evaluates, or an integer or bash numeric variable.
+        return True
+    if integers and (dynamic_declaration or integers & loaded):
+        # `declare -i x; read x`: an integer variable evaluates what a builtin or loop
+        # writes into it, and a write the walker cannot name may be to one of them.
+        return True
     for node in nodes:
         kind = node.type
         if kind == "arithmetic_expansion":
@@ -1732,9 +1776,10 @@ def _unproven_arithmetic(root: tree_sitter.Node) -> bool:
             head, rest = lexed[i][0], [t for t, _ in lexed[i + 1 :]]
             if head == "let":
                 texts += rest
-            elif head in _ARRAY_ARGUMENTS:
-                for word in rest:
-                    texts += _array_indexes(word)  # `read 'a[x]'`, `printf -v 'a[x]'`
+            elif head in ("test", "["):
+                for k, word in enumerate(rest[:-1]):
+                    if word == "-v":
+                        texts += _array_indexes(rest[k + 1])  # `test -v 'a[x]'`
             elif head == "unset":
                 for word in rest:
                     _, _, tail = word.partition("[")
@@ -1745,24 +1790,62 @@ def _unproven_arithmetic(root: tree_sitter.Node) -> bool:
                     name, eq, value = word.partition("=")
                     if eq and name.split("[", 1)[0] in integers:
                         texts.append(value)
-    # bash's numeric variables lose that meaning once unset or assigned: trust a name only
-    # when the line uses it nowhere but as `$NAME`, `${NAME}` or inside arithmetic.
-    spans = [
-        (n.start_byte, n.end_byte)
-        for n in nodes
-        if n.type in ("arithmetic_expansion", "c_style_for_statement")
-        or (n.type == "compound_statement" and n.text.startswith(b"(("))
-    ]
-    data = root.text
-    safe = frozenset(
-        name
-        for name in _SAFE_NUMERIC
-        if all(
-            any(a <= m.start() < b for a, b in spans)
-            for m in re.finditer(rb"(?<![\w$])(?<!\$\{)" + name.encode() + rb"(?!\w)", data)
-        )
-    )
+    for name, _ in destinations:
+        texts += _array_indexes(name)  # `read 'a[x]'`, `printf -v 'a[x]'`
+    # bash's numeric variables lose that meaning once unset or assigned: trust one only
+    # when the line writes it nowhere, and every write and unset has a name it can read.
+    safe = _SAFE_NUMERIC - written
     return any(_unproven(text, safe) for text in texts)
+
+
+
+_DESTINATION_OPTIONS = {"read": "a", "printf": "v", "wait": "p", "mapfile": "", "readarray": "", "getopts": ""}
+_DESTINATION_OPERANDS = {"read": "all", "printf": None, "wait": None, "mapfile": 0, "readarray": 0, "getopts": 1}
+_DATA_OPTIONS = {"read": "dinNptu", "printf": "", "wait": "", "mapfile": "dnOsuCc", "readarray": "dnOsuCc", "getopts": ""}
+
+
+def _destinations(head: str, words: list[tuple[str, bool]]) -> tuple[list[str], bool]:
+    """The variables (or elements, `a[x]`) a `read`/`printf`/`wait`/`mapfile`/`getopts`
+    call writes, and whether a destination, or a word that could be an option selecting
+    one (`printf "$opt" x`), cannot be read."""
+    names: list[str] = []
+    operands: list[tuple[str, bool]] = []
+    by_option = _DESTINATION_OPTIONS[head]
+    takes = by_option + _DATA_OPTIONS[head]
+    i = 0
+    while i < len(words):
+        text, literal = words[i]
+        if not operands and not literal:
+            return names, True  # it may be an option (`-v`) or a name
+        if operands or text == "-" or not text.startswith("-"):
+            operands.append((text, literal))
+            i += 1
+            continue
+        if text == "--":
+            operands.extend(words[i + 1 :])
+            break
+        for k, letter in enumerate(text[1:], start=1):
+            if letter not in takes:
+                continue
+            attached = text[k + 1 :]
+            if attached:
+                argument = (attached, True)
+            else:
+                i += 1
+                argument = words[i] if i < len(words) else ("", True)
+            if letter in by_option:
+                if not argument[1]:
+                    return names, True
+                names.append(argument[0])
+            break
+        i += 1
+    where = _DESTINATION_OPERANDS[head]
+    picked = operands if where == "all" else (operands[where : where + 1] if where is not None else [])
+    for text, literal in picked:
+        if not literal:
+            return names, True
+        names.append(text)
+    return names, False
 
 
 def _array_indexes(text: str) -> list[str]:

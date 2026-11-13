@@ -585,6 +585,13 @@ ARITHMETIC_SINKS = [
     "[[ -v a[x] ]]",
     "s=t; t=abc; echo \"${!s:x}\"",
     "set -- a b; echo \"${@:x}\"",
+    # Fifth local review of #13.
+    'read "$1" <<<yes',
+    "printf '%s\\n' \"${-:x}\"",
+    'declare -i n; name=n; value=X; export "$name=$value"',
+    'unset "$2"; printf -v "$2" %s "$X"; echo "$((RANDOM))"',
+    'hBc=$X; echo "$(( $- ))"',
+    "declare -i x; x=1; read x",
     "REPLY=1; read -p x; echo $((REPLY))",
     "REPLY=1; read -r -t 1 -d '' ; echo $((REPLY))",
     "v=x; x=1; mapfile -t \"$v\"; echo $((x))",
@@ -628,7 +635,11 @@ def test_arithmetic_on_literal_numbers_is_trusted():
         "REPLY=1; read x <<<foo",
         "((a[0] = 1)); test -v x; read 'a[0]' <<<z",
         "echo $((RANDOM % 6)) ${RANDOM}",
-        "export A=1 {fd}>x; export \"$x\"; declare -a {fd}>x",
+        "export A=1 {fd}>x; export \"$x\"; declare -a {fd}>x; unset B {fd}>x; read y {fd}>x",
+        "PATH=x 0<f; HOME=/dev {fd}>x",
+        "x || unset B {fd}>x; y && read z {fd}>x",
+        "printf 'a[x]\\n'; declare -i x; printf ok; read y <<<ok",
+        "let 'RANDOM % 2'; [[ RANDOM -gt 0 ]]; echo ${a[RANDOM]} $((BASH_SUBSHELL + OPTIND + HISTCMD))",
     ):
         walked = bashwalker.walk(command)
         assert not any("arithmetic" in f for f in walked.untrusted), (command, walked.untrusted)

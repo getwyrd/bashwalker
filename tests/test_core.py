@@ -40,6 +40,7 @@ UNTRUSTED = {
     "cat <<E\n`sudo id >&3`\nE": "backtick in an unquoted here-doc body",
     "declare -a 'x[$(touch m)]=1'": "subscript bash evaluates",
     "export \"x[$i]=1\"": "subscript bash evaluates",
+    "declare -a >/dev/null 'x[$(touch m)]=1'": "subscript bash evaluates",
 }
 
 # Inputs that, together, hold every named node kind of the pinned grammar.
@@ -325,6 +326,22 @@ def test_rule3_literal_flag():
         assert second_word(command).literal, command
     assert not bashwalker.walk("A=x:~/b").assignments[0].value.literal
     assert bashwalker.lex_word("~/x")[1] == frozenset({"leading-tilde"})
+
+
+def test_declaration_operands_after_a_redirect():
+    walked = bashwalker.walk("export >/dev/null 'SUDO_PROMPT=x' B=1")
+    # bash 5.3 assigns both; the one after the redirect is recovered from under it.
+    assert sorted((a.name, a.role) for a in walked.assignments) == [
+        ("B", "declaration"),
+        ("SUDO_PROMPT", "declaration"),
+    ]
+
+
+def test_function_redirects_run_at_call_time():
+    # bash 5.3: `f() { :; } <"$(cat >m)"; echo piped | f` writes `piped` to m.
+    walked = bashwalker.walk('f() { :; } <"$(cat)"; printf x | f')
+    cat = next(i for i in walked.invocations if i.words[0].text == "cat")
+    assert (cat.stdin.kind, cat.in_function) == ("unknown", True)
 
 
 def test_declaration_operands():

@@ -750,17 +750,22 @@ def _simple(walker: Walker, node, ctx: Ctx, depth: int, bound: tuple = ()) -> No
         for pieces in operands:
             if len(pieces) == 1 and pieces[0].type == "variable_assignment":
                 continue
-            operand, unsafe = _declared(walker.span(pieces[0].start_byte, pieces[-1].end_byte))
-            if unsafe:
-                walker.note_untrusted("declaration operand with a subscript bash evaluates")
-            if operand is not None:
-                assignments.append(operand)
-                walker.layer.assignments.append(operand)
+            _declaration_operand(
+                walker, walker.span(pieces[0].start_byte, pieces[-1].end_byte), assignments
+            )
     for child in others + unread + [w for w in fd_words if w.is_named]:
         walker.visit(child, ctx, depth + 1)
     records: list[Redirect] = []
     for child in redirect_nodes:
         records.extend(walker.visit(child, ctx, depth + 1))
+    # Words the grammar put after a redirect target are the command's (`cat <a b`).
+    recovered: list[tuple[int, int]] = []
+    for record in records:
+        recovered.extend(walker.operands.pop(id(record), ()))
+    if kind == "declaration":
+        # They are declaration operands like any other (`declare >/dev/null 'x=1'`).
+        for start, end in recovered:
+            _declaration_operand(walker, walker.span(start, end), assignments)
 
     # Words: tree-sitter splits some bash words in two (`$"x"`); join pieces with no
     # space between them, as bash does.
@@ -773,8 +778,7 @@ def _simple(walker: Walker, node, ctx: Ctx, depth: int, bound: tuple = ()) -> No
             groups[-1][1] = child.end_byte
         else:
             groups.append([child.start_byte, child.end_byte])
-    for record in records:
-        groups.extend([start, end] for start, end in walker.operands.pop(id(record), ()))
+    groups.extend([start, end] for start, end in recovered)
     groups.sort()
     for start, end in groups:
         words.append(make_word(walker.span(start, end)))
@@ -822,6 +826,15 @@ def _declared(source: str) -> tuple[Assignment | None, bool]:
     return Assignment(name="", value=None, role="declaration"), False
 
 
+def _declaration_operand(walker: Walker, source: str, assignments: list) -> None:
+    operand, unsafe = _declared(source)
+    if unsafe:
+        walker.note_untrusted("declaration operand with a subscript bash evaluates")
+    if operand is not None:
+        assignments.append(operand)
+        walker.layer.assignments.append(operand)
+
+
 def _assignment(walker: Walker, node, ctx: Ctx, depth: int, bound: tuple = ()):
     name_node = node.child_by_field_name("name")
     value_node = node.child_by_field_name("value")
@@ -851,8 +864,11 @@ def _function(walker: Walker, node, ctx: Ctx, depth: int, bound: tuple = ()) -> 
         if child.type in REDIRECT_KINDS:
             continue
         walker.visit(child, inner, depth + 1)
+    # bash performs a function's redirects each time the function is called, so what
+    # they run is inside the function too (`f() { :; } <"$(cat)"; x | f` gives `cat` the
+    # pipe).
     for child in list(bound) + redirects:
-        walker.visit(child, ctx, depth + 1)
+        walker.visit(child, inner, depth + 1)
 
 
 def _command_substitution(walker: Walker, node, ctx, depth, bound=()) -> None:

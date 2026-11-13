@@ -1926,10 +1926,29 @@ def _unproven_node(node: tree_sitter.Node) -> bool:
         )
     if kind.endswith("_redirect") and _unproven_descriptor(node):
         return True  # `: {a[X]}>x`: bash evaluates the element's index
+    if kind == "subshell" and _node_text(node).startswith("(("):
+        # `time ((X))`, `! ((X))`: bash's arithmetic command, which the grammar parses as
+        # nested subshells after a reserved word.
+        text = _node_text(node)
+        return not text.endswith("))") or not _pure(text[2:-2])
     if kind == "command":
         lexed, i = _lexed(node), _lexed_head(node)
         if i == UNREADABLE:
             return True  # `command -"$opt" let X`: the command after it may be any
+        sources = [_node_text(c) for c in _word_children(node)]
+        if sources and sources[0] == "coproc":
+            return True  # `coproc let X`: the walker does not look into coproc
+        if "[[" in sources and any(t in _ARITHMETIC_TESTS for t, _ in lexed):
+            return True  # `time [[ X -eq 0 ]]`: the grammar parses `[[` as a word here
+        # Words before the command that are assignments (`time RANDOM=$X`): bash makes
+        # them, so they are judged as declarations are.
+        assigned = [
+            (text, literal, source)
+            for (text, literal), source in zip(lexed[: len(lexed) if i is None else i], sources)
+            if _ASSIGNMENT_WORD.match(source)
+        ]
+        if assigned and _unproven_declaration("export", assigned):
+            return True
         extra = _words_after_redirect(node)
         if i is None:
             return bool(extra)  # `command >/dev/null let X`: the command is under the redirect
@@ -1984,7 +2003,7 @@ def _unproven_descriptor(redirect: tree_sitter.Node) -> bool:
     return match is None or not _index_pure(match.group(1))
 
 
-_MANY_WORDS = re.compile(r"\$[@*]|\$\{[@*!]|\[[@*]\]\}")
+_MANY_WORDS = re.compile(r"\$[@*]|\$\{[@*!]|\$\{[^}]*\[[@*]\]")  # `"${a[@]:0}"` too
 
 
 def _words_after_redirect(node: tree_sitter.Node) -> list[tuple[str, bool, str]]:

@@ -76,7 +76,7 @@ facts by a caller.
   descriptors included), any `-i` declaration, any declared value bash may reparse as a
   compound assignment, any unquoted expansion in a `test`, any write to one
   of bash's integer variables, any declaration or destination name the walker cannot
-  read, and any indirect `${!name}` are flagged. Arithmetic run by `eval`, `source` or a
+  read, any indirect `${!name}` and any `coproc` are flagged. Arithmetic run by `eval`, `source` or a
   callback is the caller's (the walker reports those commands, not what they run); a
   hidden command reached through arithmetic in one line otherwise is in scope.
 - Wrong stdin and prefix facts for `PATH=… $(true)` and `coproc` (nl-shell#212). Known;

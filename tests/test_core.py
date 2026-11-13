@@ -674,6 +674,14 @@ ARITHMETIC_SINKS = [
     's=IND; export OPT"$s"="$X"',
     # Twentieth local review of #13.
     'time D=1 export OPTIND="$X"',
+    # Twenty-first local review of #13.
+    "time ((X))",
+    "! ((X))",
+    "coproc ((X)); wait",
+    "time [[ X -eq 0 ]]",
+    "time RANDOM=$X",
+    "coproc let X; wait",
+    'a=(-v "b[X]"); test "${a[@]:0}"',
     "REPLY=1; read -p x; echo $((REPLY))",
     "REPLY=1; read -r -t 1 -d '' ; echo $((REPLY))",
     "v=x; x=1; mapfile -t \"$v\"; echo $((x))",

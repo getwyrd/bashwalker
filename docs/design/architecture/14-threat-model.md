@@ -134,6 +134,16 @@ inputs that hold control characters in refused lines (`test_refusals_never_quote
   value assigned to it is then evaluated) and `RANDOM`, `SECONDS` and the like unset
   earlier, which lose their numeric meaning: in a persistent session (nl-shell) a caller
   that must not run hidden commands checks those attributes in the live shell.
+- **Machine-local Claude Code settings can leak secrets.** Claude Code saves each command
+  approved with "don't ask again" verbatim, tokens included, to `.claude/settings.local.json`.
+  The repository ignores it at any depth, and `.pre-commit-config.yaml` refuses to commit it
+  (or a suffixed copy), `CLAUDE.local.md`, `.credentials.json` or `.env` even when
+  force-added, and runs gitleaks on staged content. Residual: git hooks are not cloned, so
+  the guard runs only in a clone where it was activated (the header of `.pre-commit-config.yaml`: the hook reads copies of the
+  config and the gitleaks policy taken from the default branch and refuses a checked-out or
+  staged `.gitleaksignore` and ignores `gitleaks:allow` comments, so a checked-out branch cannot redefine them), and
+  `git commit --no-verify` skips it. GitHub push protection is the backstop for a public
+  repository; a private repository on a personal account has none.
 
 ## 14.9 Gaps and their disposition
 

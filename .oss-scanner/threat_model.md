@@ -84,6 +84,10 @@ facts by a caller.
 - What a command runs later (`eval`'s argument, `source`d files, `python -c`, aliases,
   functions defined elsewhere) is not in the line. The walker reports the command, not
   what it runs.
+- The pre-commit secret guard (`.pre-commit-config.yaml`: machine-local Claude Code settings,
+  credential files, gitleaks) runs only in clones where it was activated (the hook reads copies of the config
+  and the gitleaks policy taken from the default branch) and is skipped by `git commit --no-verify`. A way to get a secret committed past an *active*
+  guard is in scope.
 
 ## How to exercise it
 

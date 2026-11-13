@@ -13,3 +13,7 @@ __pycache__/
 # Local tool/editor state.
 .claude/worktrees/
 .obsidian/
+
+# Claude Code machine-local files: may hold recorded commands with secrets; never commit
+**/.claude/settings.local.json*
+CLAUDE.local.md

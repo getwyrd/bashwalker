@@ -412,7 +412,8 @@ def _ansi_c(body: str) -> str:
             return chr(ord(control) & 0x1F)
         return _ANSI_C_SIMPLE.get(other, other)
 
-    return _ANSI_C_ESCAPE.sub(one, body)
+    # bash ends the string at its first NUL (`$'a\0b'` is `a`; also `\c@`).
+    return _ANSI_C_ESCAPE.sub(one, body).split("\0", 1)[0]
 
 
 def _decoded(node: tree_sitter.Node) -> str:
@@ -1236,10 +1237,14 @@ def walk(source: str, limits: Limits = DEFAULT_LIMITS) -> Walk:
 
 DECLARATION_BUILTINS = ("declare", "typeset", "local", "export", "readonly")
 NAMEREF_BUILTINS = ("declare", "typeset", "local")  # `-n` makes a nameref (export -n does not)
-# Variables whose value bash later runs or prompt-expands: the prompts (an interactive
-# shell expands PS0-PS2 and runs PROMPT_COMMAND; `set -x` expands PS4) and the startup
-# files a child shell sources.
-CODE_VARIABLES = ("PS0", "PS1", "PS2", "PS3", "PS4", "PROMPT_COMMAND", "BASH_ENV", "ENV")
+# Variables whose value bash later runs or expands as code: the prompts (an interactive
+# shell expands PS0-PS2 and runs PROMPT_COMMAND; `set -x` expands PS4), the startup
+# files a child shell sources, the mail message and the `fc` editor.
+CODE_VARIABLES = (
+    "PS0", "PS1", "PS2", "PS3", "PS4", "PROMPT_COMMAND", "BASH_ENV", "ENV",
+    "MAILPATH",  # an interactive shell command-expands its `?message` on new mail
+    "FCEDIT",  # `fc` runs it as the editor
+)
 _NAMES_CODE_VARIABLE = re.compile(
     r"(?:-[A-Za-z]*v)?(?:" + "|".join(CODE_VARIABLES) + r")(?:\[.*\])?(?:\+?=.*)?$", re.S
 )

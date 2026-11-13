@@ -87,6 +87,7 @@ For the GitHub Actions boundary, see the bullet in §14.2.
 | A word that looks literal but bash expands (`$x`, backticks, globs, braces, `~`, `$'…'`, `a=~/b`) | Rule 3: `lex_word` marks a word literal only with none of these, as bash quote-removes it |
 | A stdin that looks like a file or here-doc but is a pipe or the terminal (function bodies, `exec <x` elsewhere, `eval`, `trap`, a dynamic command word, `00<f`) | Rule 3: stdin is proven only in the listed forms; `may_rewire_stdin` makes every other command's stdin `unknown`; a file stdin names its redirect (`Stdin.via`) so the caller can drop it when it rejects that redirect |
 | A token taken for a redirect descriptor, so an argument disappears (`rm {a,b}>x`, `rm ١>x`) | Only ASCII digits and `{name}` / `{name[subscript]}`, as in bash, are descriptors |
+| A word written after a redirect target, which the grammar files under the redirect, so it disappears from the command (`git push origin >/dev/null HEAD:main`) | The first word after the operator is the target and every later one goes back to the command's words, in source order; with no simple command to take them the tree is untrusted |
 | A huge or deeply nested line | Rule 5: `Limits` (8 KiB checked before parsing, a 4096-node work budget, 100 levels), else `ParseRefused` |
 | Input echoed through an error | `ParseRefused` messages are fixed text |
 
@@ -107,6 +108,7 @@ inputs that hold control characters in refused lines (`test_refusals_never_quote
 | A non-literal word reported literal | Rule 3 | `test_rule3_literal_flag`, `test_declaration_operands` |
 | A wrong stdin fact | Rule 3 | `test_rule3_stdin_sources`, `test_rule3_file_stdin_names_its_redirect`, `test_unreadable_targets_are_marked`, `test_command_head_and_stdin_rewiring` |
 | A word lost to a descriptor | descriptor syntax | `test_words_next_to_redirects_are_kept` |
+| A word lost under a redirect | operands after the target | `test_words_after_a_redirect_target_stay_operands` |
 | Wrong redirect facts | redirect facts | `test_redirect_facts` |
 | Slow or deep input | Rule 5 | `test_rule5_inputs_at_the_cap_are_walked`, `test_rule5_over_cap_is_never_parsed`, `test_rule5_work_and_depth_budgets`, `test_rule5_limits_are_the_callers` |
 | Input in a refusal | fixed messages | `test_refusals_never_quote_the_input` |

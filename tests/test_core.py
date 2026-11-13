@@ -194,7 +194,12 @@ def test_rule3_stdin_sources():
     assert stdin_of("f() { sh; }; curl x | f")["sh"][0] == "unknown"
     assert stdin_of("cat 0>&1")["cat"][0] == "unknown"
     assert stdin_of("cat 0>&-")["cat"][0] == "unknown"
-    assert stdin_of("bash <<<'rm -rf ~'")["bash"] == ("literal", "rm -rf ~")
+    assert stdin_of("bash <<<'rm -rf ~'")["bash"] == ("literal", "rm -rf ~\n")
+    # bash appends a newline to every here-string, also an empty one or one that ends in
+    # a newline.
+    assert stdin_of("cat <<<''")["cat"] == ("literal", "\n")
+    assert stdin_of("cat <<<$'x\\n'")["cat"][0] == "unknown"  # $'…' is not literal
+    assert stdin_of("cat <<<'x\n'")["cat"] == ("literal", "x\n\n")
     assert stdin_of("cat <<'E'\n$x\nE")["cat"] == ("literal", "$x\n")
     assert stdin_of("cat <<E\nplain\nE")["cat"] == ("literal", "plain\n")
     assert stdin_of("cat <<E\n$x\nE")["cat"][0] == "unknown"
@@ -319,12 +324,37 @@ def test_redirect_facts():
 
 
 def test_unreadable_targets_are_marked():
-    # A MISSING target, or one the tree splits into several destinations.
-    for command in ("echo x 2>", "cat <a b"):
+    walked = bashwalker.walk("echo x 2>")  # a MISSING target
+    assert [r.readable for r in walked.redirects] == [False]
+    assert walked.untrusted
+
+
+def test_words_after_a_redirect_target_stay_operands():
+    # tree-sitter-bash puts every word after a file redirect's operator under the
+    # redirect; bash takes the first as the target and passes the rest to the command
+    # (checked against bash 5.3: `cat <a b` reads `a` and prints `b`).
+    def facts(command):
         walked = bashwalker.walk(command)
-        assert [r.readable for r in walked.redirects] == [False], command
-    # An unreadable stdin redirect proves no stdin.
-    assert bashwalker.walk("cat <a b").invocations[0].stdin.kind == "unknown"
+        (invocation,) = walked.invocations
+        return (
+            [w.text for w in invocation.words],
+            [(r.descriptor, r.operator, r.target.text, r.display) for r in invocation.redirects],
+            invocation.stdin.kind,
+            walked.untrusted,
+        )
+
+    assert facts("cat <a b") == (["cat", "b"], [(None, "<", "a", "<a")], "file", ())
+    assert facts("printf x >out y") == (["printf", "x", "y"], [(None, ">", "out", ">out")], "terminal", ())
+    assert facts('cat <a"b" c d') == (["cat", "c", "d"], [(None, "<", "ab", '<a"b"')], "file", ())
+    assert facts("echo >a b 2>c d")[0] == ["echo", "b", "d"]
+    # The case a guard on `git push` must see: the refspec is not hidden by a redirect.
+    assert facts("git push origin >/dev/null HEAD:main")[0] == ["git", "push", "origin", "HEAD:main"]
+    assert [w.text for w in bashwalker.walk("sudo rm >/dev/null -rf /").words] == ["sudo", "rm", "-rf", "/"]
+    # With no simple command to take the words (a syntax error in bash), the tree is
+    # untrusted.
+    walked = bashwalker.walk("{ cat; } <a b")
+    assert any("no command to take them" in f for f in walked.untrusted)
+    assert walked.invocations[0].stdin.kind == "unknown"
 
 
 # --- Rule 5 --------------------------------------------------------------------------

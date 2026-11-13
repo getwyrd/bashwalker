@@ -104,9 +104,9 @@ class Stdin:
     - ``file``: ``<`` (or ``0<``) from a literal path; ``value`` is the path and ``via``
       the redirect that names it, so a caller that rejects that redirect can treat this
       stdin as ``unknown``;
-    - ``literal``: a here-string whose word is literal, or a here-doc whose delimiter is
-      quoted (or unquoted with no ``$``, `` ` `` or ``\\`` in its body); ``value`` is the
-      text;
+    - ``literal``: a here-string whose word is literal (``value`` is the word with the
+      newline bash appends), or a here-doc whose delimiter is quoted (or unquoted with no
+      ``$``, `` ` `` or ``\\`` in its body; ``value`` is the body);
     - ``unknown``: everything else (function bodies, ``0>&N``, ``0>&-``, a stdin
       redirect the walker cannot place, any command in untrusted text).
 
@@ -442,6 +442,10 @@ class Walker:
         self.visits: dict[tuple[int, int, int], int] = {}
         self.work = 0
         self.heredoc_runs = _heredoc_runs(source)
+        # Words written after a file redirect's target (`cat <a b`): tree-sitter-bash puts
+        # them under the redirect, bash passes them to the command. Keyed by the
+        # redirect's id until the simple command that owns the redirect takes them.
+        self.operands: dict[int, list[tuple[int, int]]] = {}
 
     def text(self, node: tree_sitter.Node) -> str:
         return self.source[node.start_byte : node.end_byte].decode("utf-8", "surrogatepass")
@@ -712,6 +716,9 @@ def _simple(walker: Walker, node, ctx: Ctx, depth: int, bound: tuple = ()) -> No
             groups[-1][1] = child.end_byte
         else:
             groups.append([child.start_byte, child.end_byte])
+    for record in records:
+        groups.extend([start, end] for start, end in walker.operands.pop(id(record), ()))
+    groups.sort()
     for start, end in groups:
         words.append(make_word(walker.span(start, end)))
     if kind == "command" and not has_name:
@@ -832,10 +839,20 @@ def _file_redirect(walker: Walker, node, ctx, depth, bound=()) -> list[Redirect]
     operator = _operator(node)
     targets = node.children_by_field_name("destination")
     missing = any(t.is_missing or t.has_error for t in targets)
-    target = make_word(walker.text(targets[0])) if len(targets) == 1 else None
-    readable = not missing and len(targets) <= 1  # a close (`>&-`) has none
+    # Destinations with no space between them are one bash word; the first such word is
+    # the target and every later one is a word of the command (`cat <a b` reads `a` and
+    # passes `b`). A close (`>&-`) has none.
+    spans: list[list[int]] = []
+    for t in targets:
+        if spans and spans[-1][1] == t.start_byte:
+            spans[-1][1] = t.end_byte
+        else:
+            spans.append([t.start_byte, t.end_byte])
+    target = make_word(walker.span(*spans[0])) if spans else None
+    readable = not missing
     op_node = next((c for c in node.children if c.type == operator), None)
     op_start = op_node.start_byte if op_node is not None else node.start_byte
+    display_end = spans[0][1] if spans else node.end_byte
     record = Redirect(
         kind="file_redirect",
         descriptor=descriptor,
@@ -844,11 +861,13 @@ def _file_redirect(walker: Walker, node, ctx, depth, bound=()) -> list[Redirect]
         readable=readable,
         output=_is_output(descriptor, operator, "file_redirect"),
         feed=None,
-        display=(descriptor or "") + walker.span(op_start, node.end_byte),
+        display=(descriptor or "") + walker.span(op_start, display_end),
         heredoc_operator=walker.in_heredoc_run(op_start),
         start=node.start_byte,
         relative=readable and _is_relative_target(operator, target),
     )
+    if len(spans) > 1:
+        walker.operands[id(record)] = [(a, b) for a, b in spans[1:]]
     walker.layer.redirects.append(record)
     return [record]
 
@@ -918,7 +937,8 @@ def _herestring_redirect(walker: Walker, node, ctx, depth, bound=()) -> list[Red
     word = None
     if pieces:
         word = make_word(walker.span(pieces[0].start_byte, pieces[-1].end_byte))
-    feed = Stdin("literal", word.text) if word is not None and word.literal else UNKNOWN
+    # bash appends a newline to a here-string's word.
+    feed = Stdin("literal", word.text + "\n") if word is not None and word.literal else UNKNOWN
     if word is not None:
         walker.layer.words.append(word)
     record = Redirect(
@@ -989,6 +1009,10 @@ def walk(source: str, limits: Limits = DEFAULT_LIMITS) -> Walk:
     walker = Walker(data, layer, limits)
     walker.visit(tree.root_node, Ctx(stdin=TERMINAL), 0)
     _check_walk(tree, walker)
+    if walker.operands:
+        # Words after a redirect target with no simple command to take them
+        # (`{ cat; } <a b`, a syntax error in bash): the tree is not bash's.
+        layer.untrusted += ("words after a redirect target with no command to take them",)
     if layer.untrusted:
         # No stdin fact from a tree the walker does not trust.
         layer.invocations = [replace(i, stdin=UNKNOWN) for i in layer.invocations]

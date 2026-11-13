@@ -50,6 +50,19 @@ Every check runs with `python3 -m pytest` from the repo root. First-time setup:
 directly, so they always run against the tree they sit in. The required `gate` job in
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs the same command.
 
+The differential parser test (`tests/test_differential.py`) compares the walker with
+`bash -n`, shfmt and bash's own reprint. It is skipped unless enabled, and once enabled a
+missing tool or sandbox fails it. It needs `shfmt` (3.12.0) and `bwrap` on `PATH`:
+
+```bash
+BASHWALKER_DIFFERENTIAL=1 python3 -m pytest tests/test_differential.py
+```
+
+`BASHWALKER_DIFFERENTIAL_LINES` and `BASHWALKER_DIFFERENTIAL_SEED` change how many lines it
+generates and from which seed. A difference that is not a security problem goes into
+`tests/differential/known.toml` with its reason. CI's `differential` jobs run it on bash
+5.1, 5.2 and 5.3.
+
 The status checks `main` requires are listed in
 [`.github/required-checks.txt`](.github/required-checks.txt). A maintainer can see whether
 the repo's settings and branch protection still match it, and the rest of the settings

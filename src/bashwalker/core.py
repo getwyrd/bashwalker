@@ -502,6 +502,18 @@ def _decoded(node: tree_sitter.Node) -> str:
 _HIDDEN_SUBSCRIPT = re.compile(r"\[.*?(?:\$\(|`|\$\{)", re.S)
 
 
+def _joined_across_lines(node: tree_sitter.Node) -> bool:
+    """Whether a simple command's parts are separated by an unescaped line break, which
+    ends a command in bash (`HOME=/dev <<<$x` then a new line `if …` parses as one
+    command named `if`)."""
+    parts = node.children
+    for before, after in zip(parts, parts[1:]):
+        gap = node.text[before.end_byte - node.start_byte : after.start_byte - node.start_byte]
+        if b"\n" in gap.replace(b"\\\n", b""):
+            return True
+    return False
+
+
 def _quoted_heredoc(body: tree_sitter.Node) -> bool:
     """Whether a here-doc body's delimiter is quoted, so bash expands nothing in it."""
     redirect = body.parent
@@ -539,10 +551,20 @@ def untrusted_features(tree: tree_sitter.Tree, source: bytes) -> tuple[str, ...]
         if node.type == "command_substitution" and node.text.startswith(b"`"):
             if b"\\`" in node.text:
                 note("backtick substitution nested in a backtick substitution")
+            if re.search(rb"(?<!\\)`", node.text[1:-1]):
+                # An unescaped backtick cannot be inside one: the grammar merged two
+                # (`` `id` `rm x` `` parses as one substitution running "id` `rm").
+                note("backtick substitutions the parser merged into one")
         if node.type == "heredoc_body" and b"`" in node.text and not _quoted_heredoc(node):
             note("backtick in an unquoted here-doc body")
         if not node.is_named and node.type == "<<-":
             note("here-doc with <<-")
+        if node.type == "word" and re.search(rb"(?<!\\)[ \t\n]", node.text):
+            # An unquoted word cannot hold unescaped whitespace: the grammar read two
+            # words as one (`inside [ ]` gives the single word "[ ]").
+            note("word the parser read across whitespace")
+        if node.type in SIMPLE_KINDS and _joined_across_lines(node):
+            note("command the parser continued across a line break")
         if _bracket_redirects(node):
             note("'<' or '>' inside [ ], which bash reads as a redirection")
         if node.type in _TEXT_KINDS and _HIDDEN_SUBSCRIPT.search(_decoded(node)):
@@ -806,6 +828,17 @@ def _pipeline(walker: Walker, node, ctx: Ctx, depth: int, bound: tuple = ()) -> 
         walker.visit(child, stage_ctx, depth + 1, bound if i == last else ())
     if bound and last < 0:
         _apply_compound(walker, bound, ctx, depth)
+
+
+def _list(walker: Walker, node, ctx: Ctx, depth: int, bound: tuple = ()) -> None:
+    """`a && b`, `a || b`: tree-sitter attaches a trailing redirect to the whole list
+    (`x || bash 0<f`), but bash attaches it to the last command only, as in a pipeline."""
+    if not bound:
+        _children(walker, node, ctx, depth)
+        return
+    parts = [c for c in node.named_children if c.type != "comment"]
+    for child in node.named_children:
+        walker.visit(child, _async(child, ctx), depth + 1, bound if child is parts[-1] else ())
 
 
 def _negated(walker: Walker, node, ctx: Ctx, depth: int, bound: tuple = ()) -> None:
@@ -1301,6 +1334,7 @@ HANDLERS.update(
     {
         ERROR_KIND: _error,
         "pipeline": _pipeline,
+        "list": _list,
         "negated_command": _negated,
         "test_command": _test_command,
         "redirected_statement": _redirected,
@@ -1420,7 +1454,7 @@ def _skip_prefixes(words: list[Word]) -> int | None:
     when a prefix has an option the walker cannot read (``command "-$o" exec <x`` may run
     ``exec``)."""
     i = 0
-    while i < len(words) and words[i].literal and words[i].text in BUILTIN_PREFIXES:
+    while i < len(words) and words[i].literal and words[i].text in (*BUILTIN_PREFIXES, "time"):
         prefix = words[i].text
         i += 1
         while i < len(words) and words[i].text.startswith("-"):

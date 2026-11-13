@@ -492,7 +492,10 @@ def test_time_is_looked_through():
     assert stdin_of("time time exec 0<<<'echo X'; bash")["bash"][0] == "unknown"
     # Only as the first, unquoted word: after `command`/`builtin` it is the program.
     # Its options too: `time "-p" git push` runs `-p` (bash 5.3).
-    for command in ("command time git push", "builtin time git push", '"time" git push', 'time "-p" git push', "time \\-- git push"):
+    for command in (
+        "command time git push", "builtin time git push", '"time" git push', 'time "-p" git push',
+        "time \\-- git push", "time -p -p git push", "X=1 time git push", ">/dev/null time git push",
+    ):
         head = bashwalker.command_head(bashwalker.walk(command).invocations[0])
         assert head.text != "git", command
 
@@ -662,6 +665,8 @@ ARITHMETIC_SINKS = [
     'OP="-v a[X]"; [ $OP ]',
     "true && let >/dev/null X",
     ": | let >/dev/null X",
+    # Eighteenth local review of #13.
+    "OPT\\\nIND=$X",
     "REPLY=1; read -p x; echo $((REPLY))",
     "REPLY=1; read -r -t 1 -d '' ; echo $((REPLY))",
     "v=x; x=1; mapfile -t \"$v\"; echo $((x))",

@@ -182,6 +182,9 @@ class Invocation:
     redirects: tuple[Redirect, ...]
     stdin: Stdin
     in_function: bool
+    # False when an assignment or redirect comes before the first word: a leading `time`
+    # is then the external program, not bash's reserved word (`X=1 time export Y=z`).
+    time_reserved: bool = True
 
     @property
     def command_word(self) -> Word | None:
@@ -989,8 +992,8 @@ def _simple(walker: Walker, node, ctx: Ctx, depth: int, bound: tuple = ()) -> No
     # `command export 'PATH=x'`, `"export" 'PATH=x'` and `builtin unset …` are the
     # builtins themselves, which the grammar parses as an ordinary command: look through
     # the prefixes and the quoting.
-    head = _builtin_head(words) if kind == "command" else None
-    if kind == "command" and _skip_prefixes(words) == UNREADABLE:
+    head = _builtin_head(words, _time_reserved(node)) if kind == "command" else None
+    if kind == "command" and _skip_prefixes(words, _time_reserved(node)) == UNREADABLE:
         walker.note_untrusted("command or builtin prefix with an option the walker cannot read")
     declarer = 0 if kind == "declaration" else head
     display_only = declarer is not None and _displays_only(words, declarer)
@@ -1042,6 +1045,7 @@ def _simple(walker: Walker, node, ctx: Ctx, depth: int, bound: tuple = ()) -> No
             redirects=tuple(records),
             stdin=stdin,
             in_function=ctx.in_function,
+            time_reserved=_time_reserved(node),
         )
     )
 
@@ -1387,7 +1391,9 @@ def walk(source: str, limits: Limits = DEFAULT_LIMITS) -> Walk:
     walker = Walker(data, layer, limits)
     walker.visit(tree.root_node, Ctx(stdin=TERMINAL), 0)
     _check_walk(tree, walker)
-    if _unproven_arithmetic(tree.root_node):
+    # A line continuation outside single quotes (`OPT\<newline>IND=$X`): bash joins the
+    # pieces into a name the arithmetic checks would match, so they cannot rule it out.
+    if "backslash-newline" in layer.untrusted or _unproven_arithmetic(tree.root_node):
         walker.note_untrusted("arithmetic on a value the walker cannot prove is a number")
     if any(_holds_substitution_text(a.value) for a in layer.assignments):
         # A quoted value that spells a substitution: bash may evaluate it later, also
@@ -1434,10 +1440,10 @@ _NAMES_CODE_VARIABLE = re.compile(
 )
 
 
-def _builtin_head(words: list[Word]) -> int | None:
+def _builtin_head(words: list[Word], time_reserved: bool = True) -> int | None:
     """The index of the literal word bash runs as the command, after any ``command`` /
     ``builtin`` prefixes and their options; None when that word is not literal."""
-    i = _skip_prefixes(words)
+    i = _skip_prefixes(words, time_reserved)
     if i is None or i == UNREADABLE or i >= len(words) or not words[i].literal:
         return None
     if not words[i].source:
@@ -1448,7 +1454,18 @@ def _builtin_head(words: list[Word]) -> int | None:
 UNREADABLE = -1
 
 
-def _skip_prefixes(words: list[Word]) -> int | None:
+def _time_reserved(node: tree_sitter.Node) -> bool:
+    """Whether a leading `time` in this command node is bash's reserved word: only when
+    nothing (an assignment, a redirect) comes before it."""
+    for child in node.children:
+        if child.type == "variable_assignment" or child.type in REDIRECT_KINDS:
+            return False
+        if child.type in ("command_name", "word"):
+            return True
+    return True
+
+
+def _skip_prefixes(words: list[Word], time_reserved: bool = True) -> int | None:
     """The index after any ``command`` / ``builtin`` prefixes and their options; None when
     a prefix only looks a command up (``command -v``/``-V`` runs nothing); ``UNREADABLE``
     when a prefix has an option the walker cannot read (``command "-$o" exec <x`` may run
@@ -1456,10 +1473,15 @@ def _skip_prefixes(words: list[Word]) -> int | None:
     i = 0
     # `time` is a reserved word only as the first word, unquoted; after `command` or
     # `builtin` it is the external program, which runs what follows in a child process.
-    while i < len(words) and words[i].source == "time" and all(w.source in ("time", "-p", "--") for w in words[:i]):
+    while (
+        time_reserved
+        and i < len(words)
+        and words[i].source == "time"
+        and all(w.source in ("time", "-p", "--") for w in words[:i])
+    ):
         i += 1  # `time time exec …`: each leading `time` is the reserved word
-        # Its options are words as written: `time "-p" git` runs `-p`.
-        while i < len(words) and words[i].source == "-p":
+        # Its option is a word as written, once: `time "-p" git` and `time -p -p git` run `-p`.
+        if i < len(words) and words[i].source == "-p":
             i += 1
         if i < len(words) and words[i].source == "--":
             i += 1  # `time -- eval …`
@@ -1483,7 +1505,7 @@ def command_head(invocation: Invocation) -> Word | None:
     """The command word, with ``command`` and ``builtin`` in front looked through; None
     when there is no command word."""
     words = list(invocation.words)
-    i = _skip_prefixes(words)
+    i = _skip_prefixes(words, invocation.time_reserved)
     if i == UNREADABLE:
         # An option the walker cannot read: what runs is not known, so the head is that
         # non-literal word, which callers treat as the worst case.
@@ -1737,7 +1759,7 @@ def _lexed_head(node: tree_sitter.Node) -> int | None:
     of the word that runs, None when nothing runs (no word, or `command -v`/`-V`),
     ``UNREADABLE`` when a prefix option cannot be read."""
     words = [make_word(_node_text(c)) for c in _word_children(node)]
-    i = _skip_prefixes(words)
+    i = _skip_prefixes(words, _time_reserved(node))
     if i is None or i == UNREADABLE:
         return i
     return i if i < len(words) else None

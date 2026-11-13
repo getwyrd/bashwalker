@@ -82,10 +82,10 @@ For the GitHub Actions boundary, see the bullet in §14.2.
 
 | Attack | Mitigation |
 |---|---|
-| A form the grammar reads differently from bash: a syntax error or `MISSING` node, extglob, backslash-newline, a here-doc delimiter that is not a plain or fully quoted word, `<<-`, two here-docs on one line, bash 5.3 `${ }`, `<`/`>` inside `[ ]` | Rule 1: `untrusted_features` names it, `Walk.untrusted` is non-empty and every stdin is `unknown`; the caller treats the tree as untrusted |
+| A form the grammar reads differently from bash: a syntax error or `MISSING` node, extglob, backslash-newline, a here-doc delimiter that is not a plain or fully quoted word, `<<-`, two here-docs on one line, bash 5.3 `${ }`, `<`/`>` inside `[ ]`, an escaped backtick inside a backtick substitution, a backtick in an unquoted here-doc body, a quoted declaration operand with a subscript other than a number (`declare -a 'x[$(id)]=1'`) | Rule 1: `untrusted_features` names it, `Walk.untrusted` is non-empty and every stdin is `unknown`; the caller treats the tree as untrusted |
 | A node or simple command the walk skips, so a command is never reported | Rule 2: one handler per named node kind of the pinned grammar; every walk checks that each named node was visited exactly once and each simple command gave one invocation, else `ParseRefused` |
 | A word that looks literal but bash expands (`$x`, backticks, globs, braces, `~`, `$'…'`, `a=~/b`) | Rule 3: `lex_word` marks a word literal only with none of these, as bash quote-removes it |
-| A stdin that looks like a file or here-doc but is a pipe or the terminal (function bodies, `exec <x` elsewhere, `eval`, `trap`, a dynamic command word, `00<f`) | Rule 3: stdin is proven only in the listed forms; `may_rewire_stdin` makes every other command's stdin `unknown`; a file stdin names its redirect (`Stdin.via`) so the caller can drop it when it rejects that redirect |
+| A stdin that looks like a file or here-doc but is a pipe or the terminal (function bodies, `exec <x` elsewhere, `eval`, `trap`, a dynamic command word, `00<f`, `producer \| cmd </dev/stdin`) | Rule 3: stdin is proven only in the listed forms, and a file only outside `/dev`, `/proc` and `/sys` with no `..` component; `may_rewire_stdin` makes every other command's stdin `unknown`; a file stdin names its redirect (`Stdin.via`) so the caller can drop it when it rejects that redirect |
 | A token taken for a redirect descriptor, so an argument disappears (`rm {a,b}>x`, `rm ١>x`, `rm 0&>x`) | Only ASCII digits and `{name}` / `{name[subscript]}`, as in bash, are descriptors, and `&>` / `&>>` take none |
 | A word written after a redirect target, which the grammar files under the redirect, so it disappears from the command (`git push origin >/dev/null HEAD:main`) | The first word after the operator is the target and every later one goes back to the command's words, in source order; with no simple command to take them the tree is untrusted |
 | A huge or deeply nested line | Rule 5: `Limits` (8 KiB checked before parsing, a 4096-node work budget, 100 levels), else `ParseRefused` |
@@ -132,6 +132,11 @@ inputs that hold control characters in refused lines (`test_refusals_never_quote
   parsed by tree-sitter-bash, `bash -n`, shfmt and bash's own `declare -f` reprint, in a
   sandbox) closes this; it is specified in nl-shell's `policy-gate/v1` and tracked as
   nl-shell#191, to move here.
-- **Known misreads, open in nl-shell and moving here:** nested backticks and backticks in
-  an unquoted here-doc hide commands and fd-3 redirects (nl-shell#213); wrong stdin and
-  prefix facts for `PATH=… $(true)`, `coproc` and `</dev/stdin` (nl-shell#212).
+- **Arithmetic evaluation of a variable runs commands the walk never reports**
+  (`i='a[$(id)]'; echo $((i))`, also `x[i]=1`, `[[ i -eq 0 ]]`, `let`, `(( ))`): #6. Until
+  it closes, a caller that must not run hidden commands refuses lines with arithmetic
+  contexts that read variables.
+- **Known misreads, open in nl-shell and moving here:** wrong stdin and prefix facts for
+  `PATH=… $(true)` and `coproc` (nl-shell#212; its `</dev/stdin` form is fixed). The two
+  backtick forms of nl-shell#213 are flagged by Rule 1; other forms of the same kind are
+  for the differential oracle to find.

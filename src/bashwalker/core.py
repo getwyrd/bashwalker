@@ -373,6 +373,17 @@ def _bracket_redirects(node: tree_sitter.Node) -> list[tree_sitter.Node]:
     return [n for n in _iter_nodes(node) if not n.is_named and n.type in REDIRECT_OPERATORS]
 
 
+def _quoted_heredoc(body: tree_sitter.Node) -> bool:
+    """Whether a here-doc body's delimiter is quoted, so bash expands nothing in it."""
+    redirect = body.parent
+    if redirect is None:
+        return False
+    for child in redirect.children:
+        if child.type == "heredoc_start":
+            return child.text[:1] in (b"'", b'"')
+    return False
+
+
 def untrusted_features(tree: tree_sitter.Tree, source: bytes) -> tuple[str, ...]:
     """Rule 1. The features that make the tree untrusted (empty means trusted)."""
     root = tree.root_node
@@ -394,6 +405,13 @@ def untrusted_features(tree: tree_sitter.Tree, source: bytes) -> tuple[str, ...]
                 note("here-doc delimiter is not a plain or fully quoted word")
         if node.type == "heredoc_redirect":
             heredocs.append(node)
+        # tree-sitter-bash parses neither of these backtick forms; bash runs both
+        # (nl-shell#213).
+        if node.type == "command_substitution" and node.text.startswith(b"`"):
+            if b"\\`" in node.text:
+                note("backtick substitution nested in a backtick substitution")
+        if node.type == "heredoc_body" and b"`" in node.text and not _quoted_heredoc(node):
+            note("backtick in an unquoted here-doc body")
         if not node.is_named and node.type == "<<-":
             note("here-doc with <<-")
         if _bracket_redirects(node):
@@ -449,6 +467,11 @@ class Walker:
         # them under the redirect, bash passes them to the command. Keyed by the
         # redirect's id until the simple command that owns the redirect takes them.
         self.operands: dict[int, list[tuple[int, int]]] = {}
+
+    def note_untrusted(self, feature: str) -> None:
+        """Rule 1, for a feature only the walk can see."""
+        if feature not in self.layer.untrusted:
+            self.layer.untrusted += (feature,)
 
     def text(self, node: tree_sitter.Node) -> str:
         return self.source[node.start_byte : node.end_byte].decode("utf-8", "surrogatepass")
@@ -528,9 +551,28 @@ def _stdin_after(record: Redirect, stdin: Stdin) -> Stdin:
         and record.readable
         and record.target is not None
         and record.target.literal
+        and not _may_alias_a_descriptor(record.target.text)
     ):
         return Stdin("file", record.target.text, via=record)
     return UNKNOWN
+
+
+_SYSTEM_TREES = ("/dev", "/proc", "/sys")
+
+
+def _may_alias_a_descriptor(path: str) -> bool:
+    """A path under ``/dev``, ``/proc`` or ``/sys`` (``/dev/stdin``, ``/proc/self/fd/0``,
+    ``/dev/tty``) can open a descriptor the shell already has, such as the pipe a command
+    reads, so it proves no file. A ``..`` component can lead there too. A relative path
+    is resolved against the cwd at run time, which the caller places (``Redirect.relative``
+    on ``Stdin.via``)."""
+    parts = path.split("/")
+    if ".." in parts:
+        return True
+    if not path.startswith("/"):
+        return False
+    normal = "/" + "/".join(p for p in parts if p not in ("", "."))
+    return any(normal == tree or normal.startswith(tree + "/") for tree in _SYSTEM_TREES)
 
 
 def _error(walker: Walker, node, ctx: Ctx, depth: int, bound: tuple = ()) -> None:
@@ -700,7 +742,9 @@ def _simple(walker: Walker, node, ctx: Ctx, depth: int, bound: tuple = ()) -> No
         for pieces in operands:
             if len(pieces) == 1 and pieces[0].type == "variable_assignment":
                 continue
-            operand = _declared(walker.span(pieces[0].start_byte, pieces[-1].end_byte))
+            operand, unsafe = _declared(walker.span(pieces[0].start_byte, pieces[-1].end_byte))
+            if unsafe:
+                walker.note_untrusted("declaration operand with a subscript bash evaluates")
             if operand is not None:
                 assignments.append(operand)
                 walker.layer.assignments.append(operand)
@@ -745,22 +789,29 @@ def _simple(walker: Walker, node, ctx: Ctx, depth: int, bound: tuple = ()) -> No
     )
 
 
-_DECLARED = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)(?:\[[^\]]*\])?\+?=(.*)", re.S)
+_DECLARED = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)(\[[^\]]*\])?\+?=(.*)", re.S)
+_NUMBER_SUBSCRIPT = re.compile(r"\[[0-9]+\]")
 
 
-def _declared(source: str) -> Assignment | None:
+def _declared(source: str) -> tuple[Assignment | None, bool]:
     """A declaration operand that is not a ``variable_assignment`` node, as bash reads it
     after quote removal: ``export 'SUDO_PROMPT=x'`` assigns ``SUDO_PROMPT``. An operand
     whose name the walker cannot read (``export "$x"``) gives the name ``""``; a literal
-    option or plain name (``-x``, ``A``) gives ``None``."""
+    option or plain name (``-x``, ``A``) gives ``None``.
+
+    The flag is True when the operand has a subscript other than a plain number. bash
+    evaluates an indexed array's subscript after quote removal, so a quoted operand runs
+    what the tree never parsed (``declare -a 'x[$(id)]=1'`` runs ``id``)."""
     word = make_word(source)
     match = _DECLARED.match(word.text)
     if match is not None:
-        value = Word(text=match.group(2), literal=word.literal, source=source)
-        return Assignment(name=match.group(1), value=value, role="declaration")
+        value = Word(text=match.group(3), literal=word.literal, source=source)
+        subscript = match.group(2)
+        unsafe = subscript is not None and not _NUMBER_SUBSCRIPT.fullmatch(subscript)
+        return Assignment(name=match.group(1), value=value, role="declaration"), unsafe
     if word.literal:
-        return None
-    return Assignment(name="", value=None, role="declaration")
+        return None, False
+    return Assignment(name="", value=None, role="declaration"), False
 
 
 def _assignment(walker: Walker, node, ctx: Ctx, depth: int, bound: tuple = ()):
@@ -1019,7 +1070,7 @@ def walk(source: str, limits: Limits = DEFAULT_LIMITS) -> Walk:
     if walker.operands:
         # Words after a redirect target with no simple command to take them
         # (`{ cat; } <a b`, a syntax error in bash): the tree is not bash's.
-        layer.untrusted += ("words after a redirect target with no command to take them",)
+        walker.note_untrusted("words after a redirect target with no command to take them")
     if layer.untrusted:
         # No stdin fact from a tree the walker does not trust.
         layer.invocations = [replace(i, stdin=UNKNOWN) for i in layer.invocations]

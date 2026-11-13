@@ -71,9 +71,11 @@ facts by a caller.
 - Rule 1 lists the grammar disagreements found so far; the differential oracle test that
   would find the rest is not here yet (nl-shell#191, moving here). A new disagreement that
   gives a wrong fact without being flagged is still in scope.
-- Nested backticks and backticks in an unquoted here-doc hide commands and fd-3
-  redirects (nl-shell#213); wrong stdin and prefix facts for `PATH=… $(true)`, `coproc` and
-  `</dev/stdin` (nl-shell#212). Both are known; variants beyond them are in scope.
+- Arithmetic evaluation of a variable runs commands the walk never reports
+  (`i='a[$(id)]'; echo $((i))`): #6. Known; a hidden command reached another way is in
+  scope.
+- Wrong stdin and prefix facts for `PATH=… $(true)` and `coproc` (nl-shell#212). Known;
+  variants beyond them are in scope.
 - What a command runs later (`eval`'s argument, `source`d files, `python -c`, aliases,
   functions defined elsewhere) is not in the line. The walker reports the command, not
   what it runs.

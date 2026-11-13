@@ -35,6 +35,11 @@ UNTRUSTED = {
     "echo ${ echo x; }": "${ }",
     "echo ${| REPLY=x; }": "${ }",
     "[ x > y ]": "inside [ ]",
+    # Forms bash runs that the grammar does not parse (checked against bash 5.3).
+    "echo `echo \\`sudo id >&3\\``": "backtick substitution nested",
+    "cat <<E\n`sudo id >&3`\nE": "backtick in an unquoted here-doc body",
+    "declare -a 'x[$(touch m)]=1'": "subscript bash evaluates",
+    "export \"x[$i]=1\"": "subscript bash evaluates",
 }
 
 # Inputs that, together, hold every named node kind of the pinned grammar.
@@ -108,7 +113,14 @@ def test_rule1_names_each_feature(command):
 
 
 def test_rule1_quoted_text_is_trusted():
-    for command in ("echo '?(a)' \"*(b)\" \\@\\(c\\)", "echo 'a\\\nb'", "cat <<'E'\nx\nE"):
+    for command in (
+        "echo '?(a)' \"*(b)\" \\@\\(c\\)",
+        "echo 'a\\\nb'",
+        "cat <<'E'\nx\nE",
+        "cat <<'E'\n`id`\nE",  # a quoted delimiter: bash runs nothing in the body
+        "echo `id` $(id)",
+        "declare -a 'x[1]=1' x[2]=2",
+    ):
         assert bashwalker.walk(command).untrusted == (), command
 
 
@@ -209,6 +221,12 @@ def test_rule3_stdin_sources():
     assert stdin_of("cat <&3")["cat"][0] == "unknown"
     assert stdin_of("cat <>f")["cat"][0] == "unknown"
     assert stdin_of("{ cat; } <f")["cat"] == ("file", "f")
+    # A path that can alias a descriptor the shell has proves no file: /dev/stdin is the
+    # pipe here (bash 5.3: `echo piped | cat </dev/stdin` prints `piped`).
+    for path in ("/dev/stdin", "//dev/./stdin", "/proc/self/fd/0", "/dev/tty", "/sys/x", "../x", "a/../b"):
+        assert stdin_of(f"echo x | cat <{path}")["cat"][0] == "unknown", path
+    assert stdin_of("cat </tmp/x")["cat"] == ("file", "/tmp/x")
+    assert stdin_of("cat </devices")["cat"] == ("file", "/devices")
     assert stdin_of("{ sudo tee /etc/y; } </tmp/x")["sudo"] == ("file", "/tmp/x")
     assert stdin_of("exec </tmp/x; sudo tee /etc/y")["sudo"][0] == "unknown"
     assert stdin_of("while :; do cat; exec <x; done")["cat"][0] == "unknown"

@@ -1964,8 +1964,10 @@ def _unproven_node(node: tree_sitter.Node) -> bool:
         sources = [_node_text(c) for c in _word_children(node)]
         if sources and sources[0] == "coproc":
             return True  # `coproc let X`: the walker does not look into coproc
-        if "[[" in sources and any(t in _ARITHMETIC_TESTS for t, _ in lexed):
-            return True  # `time [[ X -eq 0 ]]`: the grammar parses `[[` as a word here
+        if "[[" in sources:
+            # `time [[ X -eq 0 ]]`, `time [[ -v a[X] ]]`: the grammar parses `[[` as a word
+            # here and may split the conditional at `&&`, so it cannot be read.
+            return True
         # Words before the command that are assignments (`time RANDOM=$X`): bash makes
         # them, so they are judged as declarations are.
         assigned = [

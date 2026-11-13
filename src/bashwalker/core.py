@@ -1666,6 +1666,7 @@ def _unproven_arithmetic(root: tree_sitter.Node) -> bool:
     nodes = list(_iter_nodes(root))
     integers: set[str] = set()  # declared -i anywhere: their assignments are arithmetic
     written: set[str] = set()  # names a builtin, loop, declaration, assignment or unset writes
+    unset_or_declared: set[str] = set()
     loaded: set[str] = set()  # names a builtin or loop writes (not `x=…`)
     dynamic_write = False  # a write or unset whose name the walker cannot read
     dynamic_declaration = False  # export/readonly with an operand it cannot read
@@ -1675,7 +1676,11 @@ def _unproven_arithmetic(root: tree_sitter.Node) -> bool:
         if node.type == "declaration_command":
             keyword = node.children[0].text.decode() if node.children else ""
             words = _declaration_words(node)
-            written |= {t.split("=", 1)[0].split("[", 1)[0] for t, _ in words if not t.startswith(("-", "+"))}
+            if keyword in NAMEREF_BUILTINS and _display_only([t for t, _ in words]):
+                continue  # `declare -p "$n"`, `typeset -f f`: displays, writes nothing
+            names = {t.split("=", 1)[0].split("[", 1)[0] for t, _ in words if not t.startswith(("-", "+"))}
+            written |= names
+            unset_or_declared |= names
             if keyword in _INTEGER_DECLARERS:  # export/readonly cannot give -i
                 declared = words
             elif any(not lit and not _STATIC_NAME.match(t) for t, lit in words):
@@ -1685,11 +1690,20 @@ def _unproven_arithmetic(root: tree_sitter.Node) -> bool:
             if i is None or i == UNREADABLE:
                 continue
             head = lexed[i][0]
+            if head in _INTEGER_DECLARERS and _display_only([t for t, _ in lexed[i + 1 :]]):
+                continue
             if head in _INTEGER_DECLARERS:
                 declared = lexed[i + 1 :]
+                unset_or_declared |= {
+                    t.split("=", 1)[0].split("[", 1)[0] for t, _ in declared if not t.startswith(("-", "+"))
+                }
             elif head in _VARIABLE_WRITERS:
                 names, dynamic = _destinations(head, lexed[i + 1 :])
                 dynamic_write = dynamic_write or dynamic
+                if not names and head in _DEFAULT_DESTINATIONS:
+                    names = list(_DEFAULT_DESTINATIONS[head])  # `read` → REPLY, …
+                if head == "getopts":
+                    names = [*names, "OPTARG"]  # OPTIND is kept a number by bash
                 for name in names:
                     written.add(name.split("[", 1)[0])
                     loaded.add(name.split("[", 1)[0])
@@ -1699,10 +1713,14 @@ def _unproven_arithmetic(root: tree_sitter.Node) -> bool:
                     if not literal:
                         dynamic_write = True
                     written.add(text.split("[", 1)[0])
+                    unset_or_declared.add(text.split("[", 1)[0])
+            elif head in ("cd", "pushd", "popd"):
+                loaded.update(("PWD", "OLDPWD", "DIRSTACK"))  # written as text
         elif node.type == "unset_command":
             for text, literal in _lexed(node):
                 dynamic_write = dynamic_write or not literal
                 written.add(text.split("[", 1)[0])
+                unset_or_declared.add(text.split("[", 1)[0])
         elif node.type == "for_statement":
             variable = node.child_by_field_name("variable")
             if variable is not None:
@@ -1720,7 +1738,7 @@ def _unproven_arithmetic(root: tree_sitter.Node) -> bool:
         # `read "$1"`, `unset "$x"`: the name may be an element (`a[x]`) whose index bash
         # evaluates, or an integer or bash numeric variable.
         return True
-    if integers and (dynamic_declaration or integers & loaded):
+    if (integers and dynamic_declaration) or (integers | _SAFE_NUMERIC) & loaded:
         # `declare -i x; read x`: an integer variable evaluates what a builtin or loop
         # writes into it, and a write the walker cannot name may be to one of them.
         return True
@@ -1739,7 +1757,10 @@ def _unproven_arithmetic(root: tree_sitter.Node) -> bool:
             # `[[ -v a[x] ]]`, `[ -v 'a[x]' ]`: the element's index is arithmetic.
             for operand in node.named_children:
                 if operand.type != "test_operator":
-                    texts += _array_indexes(lex_word(_node_text(operand))[0])
+                    text, causes = lex_word(_node_text(operand))
+                    if causes:
+                        return True  # `[[ -v $name ]]`: the name may be an element `a[…]`
+                    texts += _array_indexes(text)
         elif kind == "binary_expression" and _in_double_bracket(node) and any(
             c.type == "test_operator" and _node_text(c) in _ARITHMETIC_TESTS for c in node.children
         ):
@@ -1754,7 +1775,12 @@ def _unproven_arithmetic(root: tree_sitter.Node) -> bool:
                 if text not in ("@", "*"):
                     texts.append(text)
         elif kind == "expansion":
-            match = _SUBSTRING.match(_node_text(node))
+            text = _node_text(node)
+            if text.startswith("${!") and not _INDIRECT_LISTING.match(text):
+                # `${!name}`: bash reads name's value as a parameter name, and evaluates a
+                # subscript in it (`name=$1; echo "${!name}"` with $1 = a[$(id)]).
+                return True
+            match = _SUBSTRING.match(text)
             if match:
                 texts.append(match.group(1))
         elif kind == "variable_assignment":
@@ -1762,7 +1788,9 @@ def _unproven_arithmetic(root: tree_sitter.Node) -> bool:
             value_node = node.child_by_field_name("value")
             if name_node is not None and name_node.type == "subscript":
                 name_node = name_node.child_by_field_name("name") or name_node
-            if name_node is not None and _node_text(name_node) in integers and value_node is not None:
+            name = _node_text(name_node) if name_node is not None else ""
+            if (name in integers or name in _SAFE_NUMERIC) and value_node is not None:
+                # `RANDOM=$1`: bash's numeric variables are integers too.
                 texts.append(lex_word(_node_text(value_node))[0])
         elif kind == "unset_command":
             for child in node.named_children:
@@ -1779,6 +1807,8 @@ def _unproven_arithmetic(root: tree_sitter.Node) -> bool:
             elif head in ("test", "["):
                 for k, word in enumerate(rest[:-1]):
                     if word == "-v":
+                        if not lexed[i + 2 + k][1]:
+                            return True  # `test -v "$name"`: maybe an element `a[…]`
                         texts += _array_indexes(rest[k + 1])  # `test -v 'a[x]'`
             elif head == "unset":
                 for word in rest:
@@ -1794,9 +1824,27 @@ def _unproven_arithmetic(root: tree_sitter.Node) -> bool:
         texts += _array_indexes(name)  # `read 'a[x]'`, `printf -v 'a[x]'`
     # bash's numeric variables lose that meaning once unset or assigned: trust one only
     # when the line writes it nowhere, and every write and unset has a name it can read.
-    safe = _SAFE_NUMERIC - written
+    # A numeric variable keeps its meaning when assigned (its value is checked above as
+    # arithmetic); `unset` or a declaration removes it.
+    safe = _SAFE_NUMERIC - unset_or_declared
     return any(_unproven(text, safe) for text in texts)
 
+
+
+# What `read`, `mapfile` and `readarray` write without a name; `${!x*}`, `${!x@}`,
+# `${!a[@]}`, `${!a[*]}` list names or keys and evaluate nothing.
+_DEFAULT_DESTINATIONS = {"read": ("REPLY",), "mapfile": ("MAPFILE",), "readarray": ("MAPFILE",)}
+_INDIRECT_LISTING = re.compile(r"\$\{![A-Za-z_]\w*(?:[*@]|\[[*@]\])\}$")
+
+
+def _display_only(words: list[str]) -> bool:
+    """`declare -p`, `-f`, `-F` or `+p` before any operand: displays, writes nothing."""
+    for word in words:
+        if word == "--" or not word.startswith(("-", "+")):
+            return False
+        if any(c in word[1:] for c in ("pfF" if word[0] == "-" else "p")):
+            return True
+    return False
 
 
 _DESTINATION_OPTIONS = {"read": "a", "printf": "v", "wait": "p", "mapfile": "", "readarray": "", "getopts": ""}
@@ -1809,6 +1857,10 @@ def _destinations(head: str, words: list[tuple[str, bool]]) -> tuple[list[str], 
     call writes, and whether a destination, or a word that could be an option selecting
     one (`printf "$opt" x`), cannot be read."""
     names: list[str] = []
+    if head == "getopts":  # no options of its own: optstring, name, [args]
+        if len(words) < 2:
+            return names, False
+        return ([words[1][0]], False) if words[1][1] else (names, True)
     operands: list[tuple[str, bool]] = []
     by_option = _DESTINATION_OPTIONS[head]
     takes = by_option + _DATA_OPTIONS[head]

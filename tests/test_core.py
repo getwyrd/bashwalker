@@ -38,6 +38,10 @@ UNTRUSTED = {
     # Forms bash runs that the grammar does not parse (checked against bash 5.3).
     "echo `echo \\`sudo id >&3\\``": "backtick substitution nested",
     "cat <<E\n`sudo id >&3`\nE": "backtick in an unquoted here-doc body",
+    "a `id` `rm -rf ~`": "backtick substitutions the parser merged",
+    "a `b`  `c` d": "backtick substitutions the parser merged",
+    "inside [ ]": "word the parser read across whitespace",
+    "HOME=/dev <<<$x\nif git push origin main; then :; fi": "continued across a line break",
     "declare -a 'x[$(touch m)]=1'": "subscript bash evaluates",
     "export \"x[$i]=1\"": "subscript bash evaluates",
     "declare -a >/dev/null 'x[$(touch m)]=1'": "subscript bash evaluates",
@@ -176,6 +180,7 @@ def test_rule1_quoted_text_is_trusted():
         "cat <<'E'\nx\nE",
         "cat <<'E'\n`id`\nE",  # a quoted delimiter: bash runs nothing in the body
         "echo `id` $(id)",
+        'a "`b`" `c`',
         "declare -a 'x[1]=1' x[2]=2",
         "echo ${a[0]} ${a[@]} ${#a[*]}",
         "grep 'a[bc]' f; awk '{c[$1]++}'; sed -n 's/[$]//p' f",
@@ -466,6 +471,22 @@ def test_text_that_is_not_utf_8_is_walked():
     # A lone surrogate (surrogatepass) can reach the parser as bytes that a node splits.
     walked = bashwalker.walk("ls \udcff 'a[\udcff'")
     assert [w.text for w in walked.invocations[0].words][:1] == ["ls"]
+
+
+def test_a_list_redirect_belongs_to_its_last_command():
+    # tree-sitter attaches it to the whole list; bash to the last command only, so its
+    # descriptor is not an argument of that command.
+    walked = bashwalker.walk("x || bash 0<f")
+    assert [[w.text for w in i.words] for i in walked.invocations] == [["x"], ["bash"]]
+    assert [len(i.redirects) for i in walked.invocations] == [0, 1]
+    walked = bashwalker.walk("x || eval x {fd}>x")
+    assert [[w.text for w in i.words] for i in walked.invocations] == [["x"], ["eval", "x"]]
+    assert stdin_of("echo hi | x && cat <<<lit") == {"echo": ("terminal", None), "x": ("pipe", None), "cat": ("literal", "lit\n")}
+
+
+def test_time_is_looked_through():
+    walked = bashwalker.walk("time -p git push origin main")
+    assert bashwalker.command_head(walked.invocations[0]).text == "git"
 
 
 def test_function_redirects_run_at_call_time():

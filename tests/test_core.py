@@ -75,6 +75,8 @@ UNTRUSTED = {
     "printf -v $'a[$\\c@x''(touch m)0]' x": "subscript with a substitution",
     "MAILPATH='/tmp/m?$(touch m)'": "bash runs as code",
     "FCEDIT=x fc": "bash runs as code",
+    "printf -v $'PS\\064' x; set -x; :": "bash runs as code",
+    "read $'P\\x534' <<<x": "bash runs as code",
     "declare a['$(touch m)0']=1": "subscript with a substitution",
     "a[$'\\x24(touch m)0']=1": "subscript with a substitution",
     "printf -v $'a[\\x24(touch m)0]' x": "subscript with a substitution",
@@ -376,6 +378,10 @@ def test_rule3_literal_flag():
         assert second_word(command).literal, command
     assert not bashwalker.walk("A=x:~/b").assignments[0].value.literal
     assert bashwalker.lex_word("~/x")[1] == frozenset({"leading-tilde"})
+    # `$'…'` text is decoded as bash decodes it; the word stays non-literal.
+    assert bashwalker.lex_word("$'PS\\064'") == ("PS4", frozenset({"expansion"}))
+    assert bashwalker.lex_word("a$'\\x2f'b") == ("a/b", frozenset({"expansion"}))
+    assert bashwalker.lex_word("$'it\\'s'")[0] == "it's"
 
 
 def test_declaration_operands_after_a_redirect():

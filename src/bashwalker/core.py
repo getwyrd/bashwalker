@@ -259,6 +259,20 @@ def lex_word(source: str) -> tuple[str, frozenset[str]]:
             if not closed:
                 causes.add("unclosed quote")
             continue
+        if c == "$" and source[i + 1 : i + 2] == "'":
+            # `$'…'`: the text is what bash decodes (`$'PS\064'` is `PS4`). bash expands
+            # it, so the word is not literal, but every check reads the decoded text.
+            j = i + 2
+            while j < n and source[j] != "'":
+                j += 2 if source[j] == "\\" else 1
+            if j >= n:
+                causes.add("unclosed quote")
+                out.append(source[i + 2 :])
+                break
+            causes.add("expansion")
+            out.append(_ansi_c(source[i + 2 : j]))
+            i = j + 1
+            continue
         if c in "$`":
             causes.add("expansion")
         elif c in "*?[":

@@ -601,6 +601,8 @@ ARITHMETIC_SINKS = [
     "OPTIND=$1",
     "declare -i REPLY; read",
     "declare -i MAPFILE; mapfile",
+    # Seventh local review of #13.
+    "eval 'unset OPTIND; OPTIND=$X'; echo $((OPTIND))",
     "REPLY=1; read -p x; echo $((REPLY))",
     "REPLY=1; read -r -t 1 -d '' ; echo $((REPLY))",
     "v=x; x=1; mapfile -t \"$v\"; echo $((x))",

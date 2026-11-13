@@ -1667,6 +1667,7 @@ def _unproven_arithmetic(root: tree_sitter.Node) -> bool:
     integers: set[str] = set()  # declared -i anywhere: their assignments are arithmetic
     written: set[str] = set()  # names a builtin, loop, declaration, assignment or unset writes
     unset_or_declared: set[str] = set()
+    opaque = False  # code the walker cannot read may unset bash's numeric variables
     loaded: set[str] = set()  # names a builtin or loop writes (not `x=…`)
     dynamic_write = False  # a write or unset whose name the walker cannot read
     dynamic_declaration = False  # export/readonly with an operand it cannot read
@@ -1687,9 +1688,13 @@ def _unproven_arithmetic(root: tree_sitter.Node) -> bool:
                 dynamic_declaration = True  # `export "$n=$v"`: maybe an integer's name
         elif node.type == "command":
             lexed, i = _lexed(node), _lexed_head(node)
+            if i == UNREADABLE:
+                opaque = True
             if i is None or i == UNREADABLE:
                 continue
             head = lexed[i][0]
+            if not lexed[i][1] or head in SHELL_RUNNERS or head in CODE_LATER:
+                opaque = True  # `eval 'unset OPTIND; …'`, `source f`, `$cmd`, an alias
             if head in _INTEGER_DECLARERS and _display_only([t for t, _ in lexed[i + 1 :]]):
                 continue
             if head in _INTEGER_DECLARERS:
@@ -1826,7 +1831,7 @@ def _unproven_arithmetic(root: tree_sitter.Node) -> bool:
     # when the line writes it nowhere, and every write and unset has a name it can read.
     # A numeric variable keeps its meaning when assigned (its value is checked above as
     # arithmetic); `unset` or a declaration removes it.
-    safe = _SAFE_NUMERIC - unset_or_declared
+    safe = frozenset() if opaque else _SAFE_NUMERIC - unset_or_declared
     return any(_unproven(text, safe) for text in texts)
 
 

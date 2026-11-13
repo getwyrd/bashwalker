@@ -320,6 +320,11 @@ def test_rule3_stdin_sources():
     assert stdin_of("a | b & c")["a"][0] == "unknown"
     assert stdin_of("{ cat; } &")["cat"][0] == "unknown"
     assert stdin_of("cat <<<x &")["cat"] == ("literal", "x\n")  # its own redirect counts
+    # Moving fd 0 away closes it (bash 5.3: `cat <<<payload 3<&0-` reads nothing).
+    assert stdin_of("cat <<<'payload' 3<&0-")["cat"][0] == "unknown"
+    assert stdin_of("cat <<<'payload' 3<&$fd")["cat"][0] == "unknown"
+    assert stdin_of("cat <<<'payload' 3<&0")["cat"] == ("literal", "payload\n")  # a copy
+    assert stdin_of("cat <<<'payload' 2>&1")["cat"] == ("literal", "payload\n")
     # A builtin that runs shell code from an option may rewire stdin like `eval`.
     for command in ("mapfile -C 'trap x DEBUG' -c 1 a; cat", "readarray -tC f a; cat", "bind -x '\"\\C-x\":f'; cat", "mapfile $o a; cat"):
         assert stdin_of(command)["cat"][0] == "unknown", command

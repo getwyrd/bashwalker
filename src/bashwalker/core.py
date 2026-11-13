@@ -728,6 +728,12 @@ def _stdin_after(record: Redirect, stdin: Stdin) -> Stdin:
         fd = "0" if record.operator in INPUT_OPERATORS or record.operator == "<>" else "1"
     else:
         fd = record.descriptor.lstrip("0") or "0"
+    if record.operator in (">&", "<&") and record.target is not None:
+        target = record.target
+        if not target.literal or re.fullmatch(r"0+-", target.text):
+            # `3<&0-` moves fd 0 away and closes it; a target the walker cannot read
+            # may do the same.
+            return UNKNOWN
     if fd != "0":
         return stdin
     # `<path`: the path may name any descriptor at run time (a symlink to /dev/stdin

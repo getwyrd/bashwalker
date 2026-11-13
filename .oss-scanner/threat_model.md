@@ -72,7 +72,9 @@ facts by a caller.
   against bash, `bash -n` and shfmt by sampling generated lines, not exhaustively. A new
   disagreement that gives a wrong fact without being flagged is in scope.
 - Arithmetic is trusted only when it is literal numbers (#6, #12): any name, `$` or
-  backtick in an arithmetic context or array index, any `-i` declaration, any write to one
+  backtick in an arithmetic context or array index (compound-assignment keys and `{a[i]}>`
+  descriptors included), any `-i` declaration, any declared value bash may reparse as a
+  compound assignment, any unquoted expansion in a `test`, any write to one
   of bash's integer variables, any declaration or destination name the walker cannot
   read, and any indirect `${!name}` are flagged. Arithmetic run by `eval`, `source` or a
   callback is the caller's (the walker reports those commands, not what they run); a

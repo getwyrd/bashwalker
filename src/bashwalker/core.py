@@ -1608,24 +1608,25 @@ def _operands(node: tree_sitter.Node, head: int) -> list[tuple[str, bool]]:
     return [(text, literal) for first, text, literal in _name_words(node) if first > head]
 
 
-def _compound_keys(text: str) -> list[str]:
-    """The keys of a compound assignment `([k]=v [k2]+=v2 …)`, nested brackets whole
-    (`[b[0]+x]=1`)."""
-    keys, i = [], 0
-    while i < len(text):
-        if text[i] == "[" and (i == 0 or text[i - 1] in "( \t\n"):
-            depth, j = 0, i
-            while j < len(text):
-                depth += {"[": 1, "]": -1}.get(text[j], 0)
-                if depth == 0:
-                    break
-                j += 1
-            if text[j + 1 : j + 2] == "=" or text[j + 1 : j + 3] == "+=":
-                keys.append(text[i + 1 : j])
-            i = j + 1
-            continue
-        i += 1
-    return keys
+def _unproven_compound_keys(array: tree_sitter.Node) -> bool:
+    """Whether a compound assignment `([k]=v …)` has a key that is not literal numbers.
+    Bash reads an element that starts with an unquoted `[` and holds a `=` as `[key]=v`,
+    the key up to the matching `]`; the key is read from the source as written, so any
+    quote, expansion or nested bracket in it counts as not proven (`[${X:-1]x}]=v`)."""
+    elements: list[str] = []
+    end = None
+    for piece in array.named_children:  # `[b[0]+$1]=1` parses as several touching pieces
+        if elements and piece.start_byte == end:
+            elements[-1] += _node_text(piece)
+        else:
+            elements.append(_node_text(piece))
+        end = piece.end_byte
+    for text in elements:
+        if text.startswith("[") and "=" in text:
+            close = text.find("]")
+            if close < 0 or not _index_pure(text[1:close]):
+                return True
+    return False
 
 
 def _element_indexes(text: str) -> list[str]:
@@ -1724,10 +1725,11 @@ def _lexed_head(node: tree_sitter.Node) -> int | None:
 
 
 
-def _display_only(words: list[str]) -> bool:
-    """`declare -p`, `-f`, `-F` or `+p` before any operand: displays, writes nothing."""
-    for word in words:
-        if word == "--" or not word.startswith(("-", "+")):
+def _display_only(words: list[tuple[str, bool]]) -> bool:
+    """`declare -p`, `-f`, `-F` or `+p` before any operand: displays, writes nothing. A
+    word the walker cannot read ends the options (`declare -"$x" -p …` may be `-- -p`)."""
+    for word, literal in words:
+        if not literal or word == "--" or not word.startswith(("-", "+")):
             return False
         if any(c in word[1:] for c in ("pfF" if word[0] == "-" else "p")):
             return True
@@ -1830,7 +1832,7 @@ def _unproven_node(node: tree_sitter.Node) -> bool:
     if kind == "array":
         # `a=([X]=1)`: the keys of a compound assignment are indexes, which the grammar
         # leaves as plain words.
-        return any(not _index_pure(lex_word(k)[0]) for k in _compound_keys(_node_text(node)))
+        return _unproven_compound_keys(node)
     if kind == "subscript":
         index = node.child_by_field_name("index")
         return index is not None and not _index_pure(lex_word(_node_text(index))[0])
@@ -1856,10 +1858,18 @@ def _unproven_node(node: tree_sitter.Node) -> bool:
             not literal or not all(_index_pure(i) for i in _element_indexes(text))
             for _, text, literal in _name_words(node)
         )
+    if kind in ("command", "declaration_command", "unset_command") and any(
+        _redirect_descriptor(c, node)
+        and not all(_index_pure(i) for i in _element_indexes(_node_text(c)[1:-1]))
+        for c in node.children
+    ):
+        return True  # `: {a[X]}>x`: bash evaluates the element's index
     if kind == "command":
         lexed, i = _lexed(node), _lexed_head(node)
-        if i is None or i == UNREADABLE:
-            return False  # the walk itself treats an unreadable prefix
+        if i == UNREADABLE:
+            return True  # `command -"$opt" let X`: the command after it may be any
+        if i is None:
+            return False
         head = lexed[i][0]
         # A non-literal command word (`"$cmd" X`) may be any command, `eval` and `let`
         # included: like `eval`, it is opaque to the walker, and callers treat it so
@@ -1875,6 +1885,8 @@ def _unproven_node(node: tree_sitter.Node) -> bool:
                 for text, literal in rest
             )
         if head in ("test", "["):
+            if any(_may_split(_node_text(c)) for c in _word_children(node)[i + 1 :]):
+                return True  # `test $OP`: OP='-v a[X]' splits into two words
             for k, (word, literal) in enumerate(rest[:-1]):
                 if word == "-v" or not literal:  # `test "$op" 'a[X]'`: $op may be -v
                     target, literal = rest[k + 1]
@@ -1893,13 +1905,41 @@ def _unproven_node(node: tree_sitter.Node) -> bool:
     return False
 
 
+def _may_split(source: str) -> bool:
+    """Whether a word as written has an unquoted expansion, which bash may split into
+    several words."""
+    quote = None
+    k = 0
+    while k < len(source):
+        c = source[k]
+        if c == "\\" and quote != "'":
+            k += 2
+            continue
+        if quote == "'":
+            quote = None if c == "'" else quote
+        elif c == '"':
+            quote = None if quote == '"' else '"'
+        elif quote is None and c == "'":
+            quote = "'"
+        elif quote is None and c in "$`":
+            return True
+        k += 1
+    return False
+
+
 def _unproven_declaration(keyword: str, words: list[tuple[str, bool]]) -> bool:
     """A declaration that may make bash evaluate arithmetic: `-i`, an option or name the
     walker cannot read, a name that is one of bash's integer variables, or an element
     whose index is not literal numbers. `declare -p`/`-f` only display."""
-    texts = [t for t, _ in words]
-    if keyword in _INTEGER_DECLARERS and _display_only(texts):
+    if keyword in _INTEGER_DECLARERS and _display_only(words):
         return False
+    # A value bash may reparse as a compound assignment, whose keys it evaluates: with
+    # `-a` (`declare -a "a=$X"`, also export/readonly), or with declare/typeset/local on a
+    # name that may already be an array (`b=(); declare "b=$X"`), when the value can
+    # start with `(` (it starts with an expansion or with `(`).
+    arrays = keyword in _INTEGER_DECLARERS or any(
+        literal and text.startswith("-") and ("a" in text or "A" in text) for text, literal in words
+    )
     for text, literal in words:
         if text.startswith(("-", "+")):
             # `-i` adds the integer attribute; `+i` removes it.
@@ -1908,7 +1948,10 @@ def _unproven_declaration(keyword: str, words: list[tuple[str, bool]]) -> bool:
             continue
         if not literal and not _STATIC_NAME.match(text):
             return True  # `export "$name=$value"`: the name is not known
-        name = text.split("=", 1)[0].removesuffix("+")  # `OPTIND+=…` appends
+        name, equals, value = text.partition("=")
+        if arrays and equals and not literal and value.startswith(("$", "`", "(")):
+            return True  # `declare -a "a=$X"` with X='([Y]=1)'
+        name = name.removesuffix("+")  # `OPTIND+=…` appends
         if name.split("[", 1)[0] in _BASH_INTEGERS:
             return True  # `export OPTIND=$X`: bash evaluates the value
         if not all(_index_pure(i) for i in _element_indexes(name)):

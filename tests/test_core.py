@@ -294,6 +294,16 @@ def test_rule3_stdin_sources():
     assert stdin_of("$x <f; cat")["cat"][0] == "unknown"
     assert stdin_of("trap 'exec <<<payload' DEBUG; cat")["cat"][0] == "unknown"
     assert stdin_of("exec; cat")["cat"] == ("terminal", None)
+    # A background job reads /dev/null without job control (bash 5.3 `-c`), and is
+    # stopped on a terminal read with it.
+    assert stdin_of("cat & wait") == {"cat": ("unknown", None), "wait": ("terminal", None)}
+    assert stdin_of("a | b & c")["a"][0] == "unknown"
+    assert stdin_of("{ cat; } &")["cat"][0] == "unknown"
+    assert stdin_of("cat <<<x &")["cat"] == ("literal", "x\n")  # its own redirect counts
+    # A builtin that runs shell code from an option may rewire stdin like `eval`.
+    for command in ("mapfile -C 'trap x DEBUG' -c 1 a; cat", "readarray -tC f a; cat", "bind -x '\"\\C-x\":f'; cat", "mapfile $o a; cat"):
+        assert stdin_of(command)["cat"][0] == "unknown", command
+    assert stdin_of("mapfile -t a; cat")["cat"] == ("terminal", None)
     # A rewiring command is not exempt: an earlier one rewires it too (bash 5.3:
     # `exec </x; exec bash >/dev/null` runs /x).
     walked = bashwalker.walk("exec </tmp/payload; exec bash >/dev/null")

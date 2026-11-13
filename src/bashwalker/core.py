@@ -596,7 +596,17 @@ def _children(walker: Walker, node, ctx: Ctx, depth: int, bound: tuple = ()) -> 
     if bound:
         ctx = _apply_compound(walker, bound, ctx, depth)
     for child in node.named_children:
-        walker.visit(child, ctx, depth + 1)
+        walker.visit(child, _async(child, ctx), depth + 1)
+
+
+def _async(child: tree_sitter.Node, ctx: Ctx) -> Ctx:
+    """A command, pipeline or list run with `&` reads `/dev/null` without job control and
+    is stopped if it reads the terminal with it: its stdin is not proven (its own
+    redirects still set one)."""
+    after = child.next_sibling
+    if after is not None and not after.is_named and after.type == "&":
+        return replace(ctx, stdin=UNKNOWN)
+    return ctx
 
 
 def _consumed(stdin: Stdin, substituted: bool) -> Stdin:
@@ -1296,11 +1306,14 @@ SHELL_RUNNERS = ("eval", "source", ".")
 # runs before every later command).
 CODE_LATER = ("trap",)
 BUILTIN_PREFIXES = ("command", "builtin")
+# Builtins that take shell code in an option, by the option letters that do.
+CODE_OPTIONS = {"mapfile": "C", "readarray": "C", "complete": "CF", "compgen": "CF", "bind": "x"}
 
 
 def may_rewire_stdin(invocation: Invocation) -> bool:
     """Whether ``invocation`` can change the stdin of the shell itself: ``exec`` with
-    any redirect, ``eval`` / ``source`` / ``.`` / ``trap`` (code the walker does not see),
+    any redirect, ``eval`` / ``source`` / ``.`` / ``trap`` or a builtin with a code option
+    (``mapfile -C``, ``complete -C``/``-F``, ``bind -x``: code the walker does not see),
     or a command word the walker cannot read. ``command`` and ``builtin`` in front are
     looked through."""
     head = command_head(invocation)
@@ -1310,4 +1323,14 @@ def may_rewire_stdin(invocation: Invocation) -> bool:
         return True
     if head.text in SHELL_RUNNERS or head.text in CODE_LATER:
         return True
+    if head.text in CODE_OPTIONS:
+        # `mapfile -C 'code'` runs code now, `complete -C`/`bind -x` on a later key or
+        # completion: shell code the walker does not see, as with `eval` and `trap`.
+        letters = CODE_OPTIONS[head.text]
+        words = list(invocation.words)
+        for word in words[words.index(head) + 1 :]:
+            if not word.literal:
+                return True  # an option the walker cannot read
+            if word.text.startswith("-") and any(c in word.text[1:] for c in letters):
+                return True
     return head.text == "exec" and bool(invocation.redirects)

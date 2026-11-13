@@ -104,16 +104,16 @@ class Stdin:
     - ``terminal``: a command outside any function body and outside ``>(…)``, with no
       redirect touching fd 0, first in its pipeline or standing alone;
     - ``pipe``: a later stage of a pipeline, or the command inside ``>(…)``;
-    - ``file``: ``<`` (or ``0<``) from a literal path; ``value`` is the path and ``via``
-      the redirect that names it, so a caller that rejects that redirect can treat this
-      stdin as ``unknown``;
     - ``literal``: the simple command's own here-string whose word is literal (``value``
       is the word with the newline bash appends), or its own here-doc whose delimiter is
       quoted (or unquoted with no ``$``, `` ` `` or ``\\`` in its body; ``value`` is the
-      body). A literal feed on a compound command gives the commands inside ``unknown``:
-      they share it, and one may consume part of it before another reads;
-    - ``unknown``: everything else (function bodies, ``0>&N``, ``0>&-``, a stdin
-      redirect the walker cannot place, any command in untrusted text).
+      body). A literal feed is never passed into a compound command or a substitution
+      (their commands share it, and one may consume part of it before another reads), and
+      a substitution in a later redirect makes it ``unknown``;
+    - ``unknown``: everything else, including every ``<path``: what a path names (a
+      file, or through a symlink or ``/dev/fd`` a descriptor such as the pipe) is a
+      run-time fact. The redirect and its target stay in ``Invocation.redirects`` for a
+      caller that resolves the path when the command runs.
 
     Consumers MUST treat ``unknown`` as the worst case for each of their rules: as a pipe
     where a pipe is the danger, and as the terminal where the terminal is.
@@ -121,7 +121,6 @@ class Stdin:
 
     kind: str
     value: str | None = None
-    via: Redirect | None = field(default=None, compare=False, repr=False)
 
 
 TERMINAL = Stdin("terminal")
@@ -467,6 +466,9 @@ class Ctx:
     stdin: Stdin
     in_function: bool = False
     role: str | None = None  # how a variable_assignment child is used
+    # In a simple command's redirects: the stdin its words are expanded with. bash
+    # expands words before it performs any redirect.
+    command_stdin: Stdin | None = None
 
 
 Handler = Callable[["Walker", tree_sitter.Node, Ctx, int, tuple], object]
@@ -582,34 +584,9 @@ def _stdin_after(record: Redirect, stdin: Stdin) -> Stdin:
         fd = record.descriptor.lstrip("0") or "0"
     if fd != "0":
         return stdin
-    if (
-        record.operator == "<"
-        and record.descriptor in (None, "0")
-        and record.readable
-        and record.target is not None
-        and record.target.literal
-        and not _may_alias_a_descriptor(record.target.text)
-    ):
-        return Stdin("file", record.target.text, via=record)
+    # `<path`: the path may name any descriptor at run time (a symlink to /dev/stdin
+    # reads the pipe), so it proves no stdin.
     return UNKNOWN
-
-
-_SYSTEM_TREES = ("/dev", "/proc", "/sys")
-
-
-def _may_alias_a_descriptor(path: str) -> bool:
-    """A path under ``/dev``, ``/proc`` or ``/sys`` (``/dev/stdin``, ``/proc/self/fd/0``,
-    ``/dev/tty``) can open a descriptor the shell already has, such as the pipe a command
-    reads, so it proves no file. A ``..`` component can lead there too. A relative path
-    is resolved against the cwd at run time, which the caller places (``Redirect.relative``
-    on ``Stdin.via``)."""
-    parts = path.split("/")
-    if ".." in parts:
-        return True
-    if not path.startswith("/"):
-        return False
-    normal = "/" + "/".join(p for p in parts if p not in ("", "."))
-    return any(normal == tree or normal.startswith(tree + "/") for tree in _SYSTEM_TREES)
 
 
 def _error(walker: Walker, node, ctx: Ctx, depth: int, bound: tuple = ()) -> None:
@@ -791,7 +768,8 @@ def _simple(walker: Walker, node, ctx: Ctx, depth: int, bound: tuple = ()) -> No
     redirect_stdin = ctx.stdin
     for child in redirect_nodes:
         before = walker.substitutions
-        visited = walker.visit(child, replace(ctx, stdin=redirect_stdin), depth + 1)
+        redirect_ctx = replace(ctx, stdin=redirect_stdin, command_stdin=ctx.stdin)
+        visited = walker.visit(child, redirect_ctx, depth + 1)
         redirect_stdin = _consumed(redirect_stdin, walker.substitutions != before)
         for record in visited:
             records.append(record)
@@ -917,7 +895,13 @@ def _function(walker: Walker, node, ctx: Ctx, depth: int, bound: tuple = ()) -> 
 
 def _command_substitution(walker: Walker, node, ctx, depth, bound=()) -> None:
     walker.substitutions += 1
-    _children(walker, node, replace(ctx, role=None), depth, bound)
+    _children(walker, node, replace(ctx, role=None, stdin=_unshared(ctx.stdin)), depth, bound)
+
+
+def _unshared(stdin: Stdin) -> Stdin:
+    """The stdin for commands that share a feed: a literal one is not proven for any of
+    them, since one may consume part of it before another reads."""
+    return UNKNOWN if stdin.kind == "literal" else stdin
 
 
 def _process_substitution(walker: Walker, node, ctx, depth, bound=()) -> None:
@@ -925,7 +909,7 @@ def _process_substitution(walker: Walker, node, ctx, depth, bound=()) -> None:
     opener = node.children[0].type if node.child_count else ""
     if opener != ">(":
         walker.substitutions += 1  # `>(…)` reads a pipe, not the shell's stdin
-    inner = replace(ctx, role=None, stdin=PIPE if opener == ">(" else ctx.stdin)
+    inner = replace(ctx, role=None, stdin=PIPE if opener == ">(" else _unshared(ctx.stdin))
     _children(walker, node, inner, depth, bound)
 
 
@@ -963,7 +947,6 @@ def _operator(node) -> str:
 
 
 def _file_redirect(walker: Walker, node, ctx, depth, bound=()) -> list[Redirect]:
-    _children(walker, node, replace(ctx, role=None), depth)
     descriptor = _descriptor(walker, node)
     operator = _operator(node)
     targets = node.children_by_field_name("destination")
@@ -979,6 +962,15 @@ def _file_redirect(walker: Walker, node, ctx, depth, bound=()) -> list[Redirect]
             spans.append([t.start_byte, t.end_byte])
     target = make_word(walker.span(*spans[0])) if spans else None
     readable = not missing
+    # Words after the target are the command's, expanded before any redirect, so their
+    # substitutions read the command's stdin (`: </x >/dev/null "$(bash)"` reads the
+    # terminal or pipe, not /x).
+    operand_start = spans[1][0] if len(spans) > 1 else None
+    inner = replace(ctx, role=None, command_stdin=None)
+    word_ctx = replace(inner, stdin=ctx.command_stdin or UNKNOWN)
+    for child in node.named_children:
+        late = operand_start is not None and child.start_byte >= operand_start
+        walker.visit(child, word_ctx if late else inner, depth + 1)
     op_node = next((c for c in node.children if c.type == operator), None)
     op_start = op_node.start_byte if op_node is not None else node.start_byte
     display_end = spans[0][1] if spans else node.end_byte

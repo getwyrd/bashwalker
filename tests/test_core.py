@@ -215,7 +215,7 @@ def test_rule3_stdin_sources():
     assert stdin_of("cat <<E | sudo tee /x\nx\nE")["sudo"][0] == "pipe"
     assert stdin_of("cat <x | y")["y"][0] == "pipe"
     assert stdin_of("cat <<<x | y")["y"][0] == "pipe"
-    assert stdin_of("a | b <f") == {"a": ("terminal", None), "b": ("file", "f")}
+    assert stdin_of("a | b <f") == {"a": ("terminal", None), "b": ("unknown", None)}
     assert stdin_of("curl x > >(sh)")["sh"][0] == "pipe"
     assert stdin_of("cat <<E > >(sudo tee /x)\nx\nE")["sudo"][0] == "pipe"
     assert stdin_of("f() { sudo tee /x; }; cat <<E | f\nx\nE")["sudo"][0] == "unknown"
@@ -246,21 +246,18 @@ def test_rule3_stdin_sources():
             command = f"{body} {feed}"
             assert stdin_of(command)["bash"][0] == "unknown", command
     assert not bashwalker.walk("{ bash; } <<'E'\nx\nE").untrusted  # the here-doc parses
-    assert stdin_of("{ cat; } <f")["cat"] == ("file", "f")  # a file names its source only
+    assert stdin_of("{ cat; } <f")["cat"] == ("unknown", None)
     assert stdin_of("cat <<E\n$x\nE")["cat"][0] == "unknown"
     assert stdin_of("cat <<-E\n\t$(rm x)\nE")["cat"][0] != "literal"
     assert stdin_of("cat")["cat"] == ("terminal", None)
     assert stdin_of("cat <$f")["cat"][0] == "unknown"
     assert stdin_of("cat <&3")["cat"][0] == "unknown"
     assert stdin_of("cat <>f")["cat"][0] == "unknown"
-    assert stdin_of("{ cat; } <f")["cat"] == ("file", "f")
-    # A path that can alias a descriptor the shell has proves no file: /dev/stdin is the
-    # pipe here (bash 5.3: `echo piped | cat </dev/stdin` prints `piped`).
-    for path in ("/dev/stdin", "//dev/./stdin", "/proc/self/fd/0", "/dev/tty", "/sys/x", "../x", "a/../b"):
-        assert stdin_of(f"echo x | cat <{path}")["cat"][0] == "unknown", path
-    assert stdin_of("cat </tmp/x")["cat"] == ("file", "/tmp/x")
-    assert stdin_of("cat </devices")["cat"] == ("file", "/devices")
-    assert stdin_of("{ sudo tee /etc/y; } </tmp/x")["sudo"] == ("file", "/tmp/x")
+    # `<path` proves no stdin: what a path names is a run-time fact (bash 5.3 with
+    # /tmp/x -> /dev/stdin: `echo piped | cat </tmp/x` prints `piped`).
+    for path in ("f", "/tmp/x", "/dev/stdin", "/proc/self/fd/0", "../x", "self/fd/4"):
+        assert stdin_of(f"echo x | cat <{path}")["cat"] == ("unknown", None), path
+    assert stdin_of("{ sudo tee /etc/y; } </tmp/x")["sudo"] == ("unknown", None)
     assert stdin_of("exec </tmp/x; sudo tee /etc/y")["sudo"][0] == "unknown"
     assert stdin_of("while :; do cat; exec <x; done")["cat"][0] == "unknown"
     assert stdin_of("command exec <x; cat")["cat"][0] == "unknown"
@@ -271,18 +268,13 @@ def test_rule3_stdin_sources():
     assert stdin_of("PATH=x >/dev/null")[""][0] == "unknown"  # untrusted (MISSING)
 
 
-def test_rule3_file_stdin_names_its_redirect():
-    # Only fd 0 written as `<` or `0<`; the caller judges the redirect it came from.
-    assert stdin_of("cat 00<f")["cat"][0] == "unknown"
+def test_rule3_path_stdin_keeps_its_redirect():
+    # The stdin is unknown, but the redirect stays for a caller that resolves the path
+    # when the command runs. Only fd 0 is stdin.
     assert stdin_of("cat 1<f")["cat"] == ("terminal", None)
     (invocation,) = bashwalker.walk("cat <self/fd/4").invocations
-    assert (invocation.stdin.kind, invocation.stdin.value) == ("file", "self/fd/4")
-    assert invocation.stdin.via is invocation.redirects[0]
-    assert invocation.stdin.via.target.text == "self/fd/4"
-    walked = bashwalker.walk("{ cat; } <f")
-    (inner,) = walked.invocations
-    assert inner.stdin.via is walked.redirects[0]  # a compound's redirect, inherited
-    assert bashwalker.Stdin("file", "f") == inner.stdin  # `via` is not part of equality
+    assert invocation.stdin.kind == "unknown"
+    assert [(r.operator, r.target.text) for r in invocation.redirects] == [("<", "self/fd/4")]
 
 
 def test_words_next_to_redirects_are_kept():
@@ -354,12 +346,26 @@ def test_declaration_operands_after_a_redirect():
 
 def test_redirect_substitutions_read_the_earlier_redirects():
     # bash 5.3: `: <payload >"$(bash)"` runs payload in bash.
-    walked = bashwalker.walk(': </tmp/payload >"$(bash)"')
+    walked = bashwalker.walk('echo x | : </tmp/payload >"$(bash)"')
     inner = next(i for i in walked.invocations if i.words[0].text == "bash")
-    assert (inner.stdin.kind, inner.stdin.value) == ("file", "/tmp/payload")
-    walked = bashwalker.walk('{ :; } </tmp/payload >"$(bash)"')
+    assert inner.stdin.kind == "unknown"  # not the pipe: the earlier redirect replaced it
+    walked = bashwalker.walk('echo x | { :; } </tmp/payload >"$(bash)"')
     inner = next(i for i in walked.invocations if i.words[0].text == "bash")
-    assert (inner.stdin.kind, inner.stdin.value) == ("file", "/tmp/payload")
+    assert inner.stdin.kind == "unknown"
+    # Words are expanded before any redirect: a word the grammar put after a redirect
+    # target reads the command's stdin (bash 5.3: `: </x >/dev/null "$(bash)"` runs what
+    # is piped in, not /x).
+    walked = bashwalker.walk('echo x | : </tmp/payload >/dev/null "$(bash)"')
+    inner = next(i for i in walked.invocations if i.words[0].text == "bash")
+    assert inner.stdin.kind == "pipe"
+    # A literal feed is not passed into a substitution in a later redirect: its commands
+    # share it (bash 5.3: `read -N 1` takes `#`, then `bash` runs the rest).
+    for command in (
+        ": <<<'#printf X' >\"$(read -r -N 1 s; bash; printf /dev/null)\"",
+        ": <<'E' >\"$(read -r -N 1 s; bash; printf /dev/null)\"\n#printf X\nE",
+    ):
+        assert stdin_of(command)["bash"][0] == "unknown", command
+        assert stdin_of(command)["read"][0] == "unknown", command
     assert stdin_of('>"$(bash)" cat')["bash"] == ("terminal", None)  # nothing before it
 
 
@@ -448,9 +454,9 @@ def test_words_after_a_redirect_target_stay_operands():
             walked.untrusted,
         )
 
-    assert facts("cat <a b") == (["cat", "b"], [(None, "<", "a", "<a")], "file", ())
+    assert facts("cat <a b") == (["cat", "b"], [(None, "<", "a", "<a")], "unknown", ())
     assert facts("printf x >out y") == (["printf", "x", "y"], [(None, ">", "out", ">out")], "terminal", ())
-    assert facts('cat <a"b" c d') == (["cat", "c", "d"], [(None, "<", "ab", '<a"b"')], "file", ())
+    assert facts('cat <a"b" c d') == (["cat", "c", "d"], [(None, "<", "ab", '<a"b"')], "unknown", ())
     assert facts("echo >a b 2>c d")[0] == ["echo", "b", "d"]
     # The case a guard on `git push` must see: the refspec is not hidden by a redirect.
     assert facts("git push origin >/dev/null HEAD:main")[0] == ["git", "push", "origin", "HEAD:main"]

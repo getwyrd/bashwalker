@@ -865,6 +865,14 @@ def _simple(walker: Walker, node, ctx: Ctx, depth: int, bound: tuple = ()) -> No
     if head is not None and words[head].text in DECLARATION_BUILTINS:
         for word in words[head + 1 :]:
             _declaration_operand(walker, word.source, assignments)
+    declarer = 0 if kind == "declaration" else head
+    if declarer is not None and words[declarer].text in NAMEREF_BUILTINS:
+        for word in words[declarer + 1 :]:
+            option = word.text.startswith("-")
+            if option and (not word.literal or "n" in word.text[1:]):
+                # A nameref can alias any variable, also one bash runs as code
+                # (`declare -n r=PS4; r='$(id)'; set -x; :`).
+                walker.note_untrusted("nameref, which may alias a variable bash runs as code")
     if kind == "unset" or (head is not None and words[head].text == "unset"):
         # bash evaluates an array subscript in an unset operand after quote removal, so a
         # quoted operand runs what the tree never parsed (`unset 'a[$(id)0]'`).
@@ -1227,6 +1235,7 @@ def walk(source: str, limits: Limits = DEFAULT_LIMITS) -> Walk:
 
 
 DECLARATION_BUILTINS = ("declare", "typeset", "local", "export", "readonly")
+NAMEREF_BUILTINS = ("declare", "typeset", "local")  # `-n` makes a nameref (export -n does not)
 # Variables whose value bash later runs or prompt-expands: the prompts (an interactive
 # shell expands PS0-PS2 and runs PROMPT_COMMAND; `set -x` expands PS4) and the startup
 # files a child shell sources.
@@ -1239,13 +1248,30 @@ _NAMES_CODE_VARIABLE = re.compile(
 def _builtin_head(words: list[Word]) -> int | None:
     """The index of the literal word bash runs as the command, after any ``command`` /
     ``builtin`` prefixes and their options; None when that word is not literal."""
+    i = _skip_prefixes(words)
+    if i is None or i >= len(words) or not words[i].literal or not words[i].source:
+        return None
+    return i
+
+
+def _skip_prefixes(words: list[Word]) -> int | None:
+    """The index after any ``command`` / ``builtin`` prefixes and their options, or None
+    when a prefix only looks a command up (``command -v``/``-V`` runs nothing) or has an
+    option the walker cannot read."""
     i = 0
     while i < len(words) and words[i].literal and words[i].text in BUILTIN_PREFIXES:
+        prefix = words[i].text
         i += 1
-        while i < len(words) and words[i].literal and words[i].text.startswith("-"):
+        while i < len(words) and words[i].text.startswith("-"):
+            option = words[i]
+            if not option.literal:
+                return None
+            if option.text == "--":
+                i += 1
+                break
+            if prefix == "command" and ("v" in option.text or "V" in option.text):
+                return None
             i += 1
-    if i >= len(words) or not words[i].literal or not words[i].source:
-        return None
     return i
 
 
@@ -1253,13 +1279,10 @@ def command_head(invocation: Invocation) -> Word | None:
     """The command word, with ``command`` and ``builtin`` in front looked through; None
     when there is no command word."""
     words = list(invocation.words)
-    while words and words[0].literal and words[0].text in BUILTIN_PREFIXES:
-        words.pop(0)
-        while words and words[0].literal and words[0].text.startswith("-"):
-            words.pop(0)
-    if not words or not words[0].source:
+    i = _skip_prefixes(words)
+    if i is None or i >= len(words) or not words[i].source:
         return None
-    return words[0]
+    return words[i]
 
 
 # Builtins that run shell code the walker does not see.

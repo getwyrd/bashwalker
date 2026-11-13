@@ -68,6 +68,9 @@ UNTRUSTED = {
     "read PS4 <<<x": "bash runs as code",
     "declare PROMPT_COMMAND=x": "bash runs as code",
     "BASH_ENV=./e bash -c :": "bash runs as code",
+    "command declare -n r=PS4; r=x; set -x; :": "nameref",
+    "f() { local -n r=PS4; r=x; }": "nameref",
+    "declare -gn r=PS4": "nameref",
     "declare a['$(touch m)0']=1": "subscript with a substitution",
     "a[$'\\x24(touch m)0']=1": "subscript with a substitution",
     "printf -v $'a[\\x24(touch m)0]' x": "subscript with a substitution",
@@ -449,6 +452,13 @@ def test_declarations_behind_command_and_builtin():
         assert [(a.name, a.role) for a in walked.assignments] == [(name, "declaration")], command
     assert bashwalker.walk("command declare -a 'x[$(touch m)]=1'").untrusted
     assert bashwalker.walk("echo export 'PATH=/x'").assignments == []  # not a prefix
+    # `command -v`/`-V` only look a command up (bash 5.3 leaves PATH alone).
+    for command in ("command -v export PATH=/x", "command -pV export PATH=/x", "command -V unset 'a[$i]'"):
+        walked = bashwalker.walk(command)
+        assert walked.assignments == [], command
+        assert bashwalker.command_head(walked.invocations[0]) is None, command
+    assert bashwalker.command_head(bashwalker.walk("command -p ls").invocations[0]).text == "ls"
+    assert not bashwalker.walk("export -n X").untrusted  # removes the export: no nameref
 
 
 def test_declaration_operands():

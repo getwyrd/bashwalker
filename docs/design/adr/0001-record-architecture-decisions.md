@@ -1,5 +1,5 @@
 ---
-created: {{DATE}}
+created: 13.11.2026 02:25
 type: adr
 status: Accepted
 tags:
@@ -11,7 +11,7 @@ tags:
 
 ## Context
 
-{{PROJECT_NAME}} makes decisions early that later work depends on. Without a durable record,
+bashwalker makes decisions early that later work depends on. Without a durable record,
 the same questions come back in every issue and pull request, and the reasons are lost when
 the code changes.
 

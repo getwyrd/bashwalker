@@ -1,8 +1,8 @@
-# {{PROJECT_NAME}} — documentation
+# bashwalker — documentation
 
-> {{PROJECT_DESCRIPTION}}
+> A bash command line in, proven facts per simple command out: a fail-closed tree-sitter-bash walker (extracted from nl-shell)
 
-This folder is the single source of truth for {{PROJECT_NAME}}'s documentation. It is
+This folder is the single source of truth for bashwalker's documentation. It is
 plain Markdown, editable in any editor or in Obsidian, and reviewed in the same pull
 requests as the code.
 
@@ -14,7 +14,7 @@ requests as the code.
 | [`design/templates/`](design/templates/README.md) | Fill-in templates for each class. Copy, don't edit in place. |
 | [`design/reviews/`](design/reviews/README.md) | Dated go/no-go and readiness reviews. |
 | [`governance/`](governance/GOVERNANCE.md) | Who decides what, how people gain and lose roles, and the [Code of Conduct](governance/CODE_OF_CONDUCT.md). |
-| [`NAME.md`](NAME.md) | Why the project is called {{PROJECT_NAME}}. |
+| [`NAME.md`](NAME.md) | Why the project is called bashwalker. |
 | [`../.oss-scanner/threat_model.md`](../.oss-scanner/threat_model.md) | Short threat-model summary for security reviewers; the full model is architecture §14. |
 
 <!-- Add rows here for anything else the project keeps under docs/, for example a

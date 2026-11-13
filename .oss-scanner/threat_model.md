@@ -1,4 +1,4 @@
-# Threat model: {{PROJECT_NAME}}
+# Threat model: bashwalker
 
 Reviewer-facing summary of what an attacker can reach and how bad each outcome is, for
 security reviewers and scanners. The full, living threat model is

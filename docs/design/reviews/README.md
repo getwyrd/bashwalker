@@ -1,5 +1,5 @@
 ---
-created: {{DATE}}
+created: 13.11.2026 02:25
 type: index
 tags:
   - review

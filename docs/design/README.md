@@ -1,10 +1,10 @@
 ---
-created: {{DATE}}
+created: 13.11.2026 02:25
 type: index
 tags:
   - index
 ---
-# {{PROJECT_NAME}} — design documentation
+# bashwalker — design documentation
 
 The design documentation is organized into four classes, each with its own purpose,
 audience and change process. Some documents describe the system and change with it, some

@@ -541,6 +541,18 @@ ARITHMETIC_SINKS = [
     "x=$((x+1))",
     "read x <<<\"$X\"; echo $((x))",
     "while ((i < 3)); do ((i++)); done",
+    # #12: writes that may not run, or do not cover what is read.
+    "((0 && (x=1))); echo $((x))",
+    "((1 || (x=1))); echo $((x))",
+    "((0 ? x=1 : 0)); echo $((x))",
+    "x[1]=1; echo $((x))",
+    "echo ${m[X]}; declare -A m",
+    "false && declare -A m; echo ${m[X]}",
+    "REPLY=1; read; echo $((REPLY))",
+    "MAPFILE=1; mapfile; echo $((MAPFILE))",
+    "x=1; eval 'x=$X'; echo $((x))",
+    "v=x; x=1; read \"$v\"; echo $((x))",
+    "y=$X; declare -i y; echo $((y))",
 ]
 
 
@@ -572,6 +584,10 @@ def test_arithmetic_on_proven_numbers_is_trusted():
         "[ \"$X\" -eq 0 ]; test \"$X\" -eq 0",
         "declare -i y=5; y=6",
         "x=$((2 + 3)); echo $((x))",
+        "x=1; ((x++)); echo $((x))",
+        "x=(1 2); x[1]=3; echo $((x))",
+        "declare -A m; echo ${m[$k]} ${m[key]}",
+        "declare -i y; y=5; echo $((y))",
     ):
         walked = bashwalker.walk(command)
         assert not any("arithmetic" in f for f in walked.untrusted), (command, walked.untrusted)

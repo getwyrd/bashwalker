@@ -1610,15 +1610,42 @@ def _in_double_bracket(node: tree_sitter.Node) -> bool:
 
 
 def _words(node: tree_sitter.Node) -> list[str]:
-    return [lex_word(_node_text(c))[0] for c in node.named_children]
+    return [text for text, _ in _lexed(node)]
+
+
+def _lexed(node: tree_sitter.Node) -> list[tuple[str, bool]]:
+    """A command's words (not its redirects or prefix assignments) after quote removal,
+    each with whether it is literal."""
+    out = []
+    for child in node.named_children:
+        if child.type.endswith("_redirect"):
+            continue
+        if child.type == "variable_assignment" and node.type == "command":
+            continue  # a prefix assignment (`x=1 cmd`), not a word of the command
+        text, causes = lex_word(_node_text(child))
+        out.append((text, not causes))
+    return out
+
+
+# Variables a builtin writes when no name is given.
+_IMPLICIT_WRITES = {"read": ("REPLY",), "mapfile": ("MAPFILE",), "readarray": ("MAPFILE",),
+                    "getopts": ("OPTARG",)}
+# A write inside these operators may be skipped (`((0 && (x=1)))`).
+_CONDITIONAL_ARITHMETIC = re.compile(r"&&|\|\||\?")
 
 
 def _unproven_arithmetic(root: tree_sitter.Node) -> bool:
     reads: list[tuple[str, int]] = []  # (arithmetic text, where it is read)
     writes: dict[str, list[tuple[bool, int, tuple[int, int] | None]]] = {}
     other_writes: set[str] = set()  # written in a way that proves no number
-    integers: set[str] = set()
-    associative: set[str] = set()
+    integers: set[str] = set()  # declared -i anywhere: their assignments are arithmetic
+    # name -> where an unconditional `declare -i` / `declare -A` of it has finished
+    integer_at: dict[str, list[int]] = {}
+    associative_at: dict[str, list[int]] = {}
+    opaque = False  # the line may write variables the walker cannot see
+
+    def declared(table: dict[str, list[int]], name: str, at: int) -> bool:
+        return any(end <= at for end in table.get(name, []))
 
     def write(name: str, numeric: bool, end: int, unconditional: bool, scope=None) -> None:
         if not numeric:
@@ -1629,30 +1656,42 @@ def _unproven_arithmetic(root: tree_sitter.Node) -> bool:
     def arithmetic(text: str, node: tree_sitter.Node, scope=None) -> None:
         reads.append((text, node.start_byte))
         top = _unconditional(node) or scope is not None
+        # `((0 && (x=1)))`: a write behind &&, || or ?: may not run, so it proves nothing.
+        top = top and not _CONDITIONAL_ARITHMETIC.search(text)
         for m in _ARITHMETIC_WRITE.finditer(text):
             write(m.group(1) or m.group(2), True, node.end_byte, top, scope)
 
-    def declaration(words: list[str], node: tree_sitter.Node) -> None:
-        options = "".join(w[1:] for w in words if w.startswith("-"))
-        names = [w.split("=", 1)[0].split("[", 1)[0] for w in words if not w.startswith("-")]
-        if "i" in options:
-            integers.update(names)
-        if "A" in options:
-            associative.update(names)
+    def declaration(words: list[tuple[str, bool]], node: tree_sitter.Node) -> None:
+        nonlocal opaque
+        if any(not literal for _, literal in words):
+            opaque = True  # `declare "$n"=x`, `declare $opts x`: what it writes is unknown
+        texts = [t for t, _ in words]
+        options = "".join(w[1:] for w in texts if w.startswith("-"))
+        names = [w.split("=", 1)[0].split("[", 1)[0] for w in texts if not w.startswith(("-", "+"))]
+        # An attribute counts from where the declaration has run, unconditionally.
+        end = node.end_byte if _unconditional(node) else None
+        for letter, table in (("i", integer_at), ("A", associative_at)):
+            if letter in options:
+                for name in names:
+                    if letter == "i":
+                        integers.add(name)
+                    if end is not None:
+                        table.setdefault(name, []).append(end)
 
     nodes = list(_iter_nodes(root))
     for node in nodes:  # first pass: what the declarations say
         if node.type == "declaration_command":
-            declaration(_words(node), node)  # the keyword is not a named child
+            declaration(_lexed(node), node)  # the keyword is not a named child
         elif node.type == "command":
-            words = _words(node)
+            lexed = _lexed(node)
+            words = [t for t, _ in lexed]
             i = 0
             while i < len(words) and words[i] in BUILTIN_PREFIXES:
                 i += 1
                 while i < len(words) and words[i].startswith("-"):
                     i += 1
             if i < len(words) and words[i] in _INTEGER_DECLARERS:
-                declaration(words[i + 1 :], node)
+                declaration(lexed[i + 1 :], node)
     for node in nodes:
         kind = node.type
         if kind == "arithmetic_expansion":
@@ -1674,8 +1713,10 @@ def _unproven_arithmetic(root: tree_sitter.Node) -> bool:
         elif kind == "subscript":
             name = node.child_by_field_name("name")
             index = node.child_by_field_name("index")
-            if index is None or (name is not None and _node_text(name) in associative):
+            if index is None:
                 continue
+            if name is not None and declared(associative_at, _node_text(name), node.start_byte):
+                continue  # an associative key, once `declare -A` has run: not arithmetic
             text = lex_word(_node_text(index))[0]
             if text not in ("@", "*"):
                 arithmetic(text, index)
@@ -1688,7 +1729,8 @@ def _unproven_arithmetic(root: tree_sitter.Node) -> bool:
             value_node = node.child_by_field_name("value")
             if name_node is None:
                 continue
-            if name_node.type == "subscript":
+            element = name_node.type == "subscript"
+            if element:
                 inner = name_node.child_by_field_name("name")
                 name_node = inner if inner is not None else name_node
             name = _node_text(name_node)
@@ -1697,28 +1739,48 @@ def _unproven_arithmetic(root: tree_sitter.Node) -> bool:
                 continue  # `x=1 cmd`: set for that command only, not in the shell
             if name in integers:
                 arithmetic(value, value_node or node)
-            numeric = value == "" or bool(_NUMERIC_VALUE.fullmatch(value)) or name in integers
+            numeric = (
+                value == ""
+                or bool(_NUMERIC_VALUE.fullmatch(value))
+                or declared(integer_at, name, node.start_byte)
+            )
+            if element:
+                # `x[1]=1` leaves element 0, which `$((x))` reads: it proves nothing about
+                # x, and a non-number in any element makes x unproven.
+                if not numeric:
+                    other_writes.add(name)
+                continue
             write(name, numeric, node.end_byte, _unconditional(node))
         elif kind == "for_statement":
             variable = node.child_by_field_name("variable")
             if variable is not None:
                 other_writes.add(_node_text(variable))
+            if node.text.startswith(b"select"):
+                other_writes.add("REPLY")  # `select` also stores the line read in REPLY
         elif kind == "unset_command":
             for child in node.named_children:
                 text = lex_word(_node_text(child))[0]
                 base, _, rest = text.partition("[")
-                if rest.endswith("]") and base not in associative and rest[:-1] not in ("@", "*"):
+                assoc = declared(associative_at, base, node.start_byte)
+                if rest.endswith("]") and not assoc and rest[:-1] not in ("@", "*"):
                     arithmetic(rest[:-1], child)
         elif kind == "command":
-            words = _words(node)
+            lexed = _lexed(node)
+            words = [t for t, _ in lexed]
             i = 0
-            while i < len(words) and words[i] in BUILTIN_PREFIXES:
+            while i < len(words) and words[i] in (*BUILTIN_PREFIXES, "time"):
                 i += 1
                 while i < len(words) and words[i].startswith("-"):
                     i += 1
             if i >= len(words):
                 continue
             head, rest = words[i], words[i + 1 :]
+            if not lexed[i][1] or head in SHELL_RUNNERS or head in CODE_LATER:
+                # `eval 'x=…'`, `source f`, `$cmd`, an alias: may write any variable.
+                opaque = True
+            if head in _VARIABLE_WRITERS and any(not literal for _, literal in lexed[i + 1 :]):
+                opaque = True  # `read "$v"`: writes a variable the walker cannot name
+            other_writes.update(_IMPLICIT_WRITES.get(head, ()))
             if head == "let":
                 for word in rest:
                     arithmetic(word, node)
@@ -1733,7 +1795,8 @@ def _unproven_arithmetic(root: tree_sitter.Node) -> bool:
             elif head == "unset":
                 for word in rest:
                     base, _, tail = word.partition("[")
-                    if tail.endswith("]") and base not in associative and tail[:-1] not in ("@", "*"):
+                    assoc = declared(associative_at, base, node.start_byte)
+                    if tail.endswith("]") and not assoc and tail[:-1] not in ("@", "*"):
                         arithmetic(tail[:-1], node)
             elif head in _INTEGER_DECLARERS:
                 for word in rest:
@@ -1743,13 +1806,17 @@ def _unproven_arithmetic(root: tree_sitter.Node) -> bool:
                     base = name.split("[", 1)[0]
                     if base in integers:
                         arithmetic(value, node)
-                    numeric = value == "" or bool(_NUMERIC_VALUE.fullmatch(value)) or base in integers
+                    numeric = (
+                        value == ""
+                        or bool(_NUMERIC_VALUE.fullmatch(value))
+                        or declared(integer_at, base, node.start_byte)
+                    )
                     write(base, numeric, node.end_byte, _unconditional(node))
 
     def proven(name: str, at: int) -> bool:
         if name in _SAFE_NUMERIC:
             return True
-        if name in other_writes:
+        if opaque or name in other_writes:
             return False
         return any(
             end <= at and (scope is None or scope[0] <= at < scope[1])

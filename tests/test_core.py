@@ -561,6 +561,9 @@ ARITHMETIC_SINKS = [
     "builtin time declare -A m; echo ${m[X]}",
     "command time declare -A m 2>/dev/null; echo ${m[X]}",
     "p=1 builtin declare 'x[1]=1'; echo $((x))",
+    "x=1; time -- eval 'x=$X'; echo $((x))",
+    "REPLY=1; read -p x; echo $((REPLY))",
+    "REPLY=1; read -r -t 1 -d '' ; echo $((REPLY))",
 ]
 
 
@@ -596,6 +599,9 @@ def test_arithmetic_on_proven_numbers_is_trusted():
         "x=(1 2); x[1]=3; echo $((x))",
         "declare -A m; echo ${m[$k]} ${m[key]}",
         "declare -i y; y=5; echo $((y))",
+        "REPLY=1; read x <<<foo; echo $((REPLY))",
+        "REPLY=1; read -r -a arr <<<foo; echo $((REPLY))",
+        "MAPFILE=1; mapfile -t a <<<foo; echo $((MAPFILE))",
     ):
         walked = bashwalker.walk(command)
         assert not any("arithmetic" in f for f in walked.untrusted), (command, walked.untrusted)

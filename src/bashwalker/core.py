@@ -1460,6 +1460,8 @@ def _skip_prefixes(words: list[Word]) -> int | None:
         i = 1
         while i < len(words) and words[i].literal and words[i].text == "-p":
             i += 1
+        if i < len(words) and words[i].literal and words[i].text == "--":
+            i += 1  # `time -- eval …`
     while i < len(words) and words[i].literal and words[i].text in BUILTIN_PREFIXES:
         prefix = words[i].text
         i += 1
@@ -1649,9 +1651,32 @@ def _lexed_head(node: tree_sitter.Node) -> int | None:
     return i if i < len(words) else None
 
 
-# Variables a builtin writes when no name is given.
-_IMPLICIT_WRITES = {"read": ("REPLY",), "mapfile": ("MAPFILE",), "readarray": ("MAPFILE",),
-                    "getopts": ("OPTARG",)}
+# Variables a builtin writes when it is given no destination, and its options that take an
+# argument (`read -p x` reads into REPLY: x is the prompt).
+_IMPLICIT_WRITES = {"read": ("REPLY",), "mapfile": ("MAPFILE",), "readarray": ("MAPFILE",)}
+_ARGUMENT_OPTIONS = {"read": "adinNptu", "mapfile": "dnOsuCc", "readarray": "dnOsuCc"}
+
+
+def _default_destination(head: str, operands: list[str]) -> bool:
+    """Whether `read` / `mapfile` writes its default variable: no name operand and, for
+    `read`, no `-a` array. Option arguments (attached or separate) are not names."""
+    takes = _ARGUMENT_OPTIONS[head]
+    i = 0
+    while i < len(operands):
+        word = operands[i]
+        if word == "--":
+            return i + 1 >= len(operands)
+        if not word.startswith("-") or word == "-":
+            return False  # a name operand
+        for k, letter in enumerate(word[1:]):
+            if letter in takes:
+                if head == "read" and letter == "a":
+                    return False  # `read -a arr` writes arr
+                if k == len(word) - 2:
+                    i += 1  # the argument is the next word
+                break
+        i += 1
+    return True
 # A write inside these operators may be skipped (`((0 && (x=1)))`).
 _CONDITIONAL_ARITHMETIC = re.compile(r"&&|\|\||\?")
 
@@ -1796,7 +1821,10 @@ def _unproven_arithmetic(root: tree_sitter.Node) -> bool:
                 opaque = True
             if head in _VARIABLE_WRITERS and any(not literal for _, literal in lexed[i + 1 :]):
                 opaque = True  # `read "$v"`: writes a variable the walker cannot name
-            other_writes.update(_IMPLICIT_WRITES.get(head, ()))
+            if head in _IMPLICIT_WRITES and _default_destination(head, rest):
+                other_writes.update(_IMPLICIT_WRITES[head])
+            if head == "getopts":
+                other_writes.add("OPTARG")
             if head == "let":
                 for word in rest:
                     arithmetic(word, node)

@@ -1558,7 +1558,6 @@ _STATIC_NAME = re.compile(r"[A-Za-z_]\w*(?:\[[^\]]*\])?\+?=")
 # Builtins that write variables they are given.
 _VARIABLE_WRITERS = ("read", "printf", "mapfile", "readarray", "getopts", "wait")
 # `${!x*}`, `${!x@}`, `${!a[@]}`, `${!a[*]}` list names or keys and evaluate nothing.
-_COMPOUND_KEY = re.compile(r"(?:^|[\s(])\[([^\]]*)\]\+?=")
 _INDIRECT_LISTING = re.compile(r"\$\{![A-Za-z_]\w*(?:[*@]|\[[*@]\])\}$")
 
 
@@ -1575,39 +1574,58 @@ def _index_pure(index: str) -> bool:
     return index.strip() in ("@", "*") or _pure(index)
 
 
-def _name_words(node: tree_sitter.Node) -> list[tuple[str, bool]]:
-    """A command's words with pieces that touch joined (`unset a[0]` parses as `a` and
-    `[0]`), each literal when bash expands nothing in it but its brackets: an element name
-    like `a[0]` is a name, not a glob."""
-    out: list[tuple[str, bool]] = []
+def _name_words(node: tree_sitter.Node) -> list[tuple[int, str, bool]]:
+    """A command's words with pieces that touch joined (`a[X]` parses as `a` and `[X]`),
+    each with the index (in ``_word_children``) of its first piece, and literal when bash
+    expands nothing in it but its brackets: an element name like `a[0]` is a name, not a
+    glob."""
+    groups: list[tuple[int, str]] = []
     end = None
-    for child in _word_children(node):
+    for k, child in enumerate(_word_children(node)):
         text = _node_text(child)
-        if out and end == child.start_byte:
-            text = out.pop()[2] + text
-        out.append((text, True, text))
+        if groups and end == child.start_byte:
+            first, previous = groups.pop()
+            groups.append((first, previous + text))
+        else:
+            groups.append((k, text))
         end = child.end_byte
     result = []
-    for _, _, source in out:
+    for first, source in groups:
         text, causes = lex_word(source)
         # A glob is a literal name only as one element `name[…]`, which can only expand to
         # a name without brackets; `a*` may expand to a file named `a[$(id)]`.
         literal = not causes or (causes == {"glob"} and bool(_ELEMENT_FORM.fullmatch(text)))
-        result.append((text, literal))
+        result.append((first, text, literal))
     return result
 
 
 _ELEMENT_FORM = re.compile(r"[A-Za-z_]\w*\[[^\[\]*?]*\]")
 
 
-def _operands(node: tree_sitter.Node, lexed: list[tuple[str, bool]], head: int) -> list[tuple[str, bool]]:
-    """The words after the command word, with element names joined and judged as names
-    (``_name_words``). When joining changed the word count the index of the head no longer
-    lines up, so the plain words are used, which only judges more strictly."""
-    names = _name_words(node)
-    if len(names) != len(lexed):
-        return lexed[head + 1 :]
-    return names[head + 1 :]
+def _operands(node: tree_sitter.Node, head: int) -> list[tuple[str, bool]]:
+    """The words after the command word (``_word_children`` index ``head``), with element
+    names joined and judged as names (``_name_words``)."""
+    return [(text, literal) for first, text, literal in _name_words(node) if first > head]
+
+
+def _compound_keys(text: str) -> list[str]:
+    """The keys of a compound assignment `([k]=v [k2]+=v2 …)`, nested brackets whole
+    (`[b[0]+x]=1`)."""
+    keys, i = [], 0
+    while i < len(text):
+        if text[i] == "[" and (i == 0 or text[i - 1] in "( \t\n"):
+            depth, j = 0, i
+            while j < len(text):
+                depth += {"[": 1, "]": -1}.get(text[j], 0)
+                if depth == 0:
+                    break
+                j += 1
+            if text[j + 1 : j + 2] == "=" or text[j + 1 : j + 3] == "+=":
+                keys.append(text[i + 1 : j])
+            i = j + 1
+            continue
+        i += 1
+    return keys
 
 
 def _element_indexes(text: str) -> list[str]:
@@ -1728,6 +1746,8 @@ def _destinations(head: str, words: list[tuple[str, bool]]) -> tuple[list[str], 
     one (`printf "$opt" x`), cannot be read."""
     names: list[str] = []
     if head == "getopts":  # no options of its own: optstring, name, [args]
+        if words and not words[0][1]:
+            return names, True  # `getopts "$dash" …`: it may expand to `--`
         if words and words[0] == ("--", True):
             words = words[1:]  # `getopts -- ab OPTIND`
         if len(words) < 2:
@@ -1810,7 +1830,7 @@ def _unproven_node(node: tree_sitter.Node) -> bool:
     if kind == "array":
         # `a=([X]=1)`: the keys of a compound assignment are indexes, which the grammar
         # leaves as plain words.
-        return any(not _index_pure(lex_word(k)[0]) for k in _COMPOUND_KEY.findall(_node_text(node)))
+        return any(not _index_pure(lex_word(k)[0]) for k in _compound_keys(_node_text(node)))
     if kind == "subscript":
         index = node.child_by_field_name("index")
         return index is not None and not _index_pure(lex_word(_node_text(index))[0])
@@ -1834,7 +1854,7 @@ def _unproven_node(node: tree_sitter.Node) -> bool:
     if kind == "unset_command":
         return any(
             not literal or not all(_index_pure(i) for i in _element_indexes(text))
-            for text, literal in _name_words(node)
+            for _, text, literal in _name_words(node)
         )
     if kind == "command":
         lexed, i = _lexed(node), _lexed_head(node)
@@ -1844,7 +1864,7 @@ def _unproven_node(node: tree_sitter.Node) -> bool:
         # A non-literal command word (`"$cmd" X`) may be any command, `eval` and `let`
         # included: like `eval`, it is opaque to the walker, and callers treat it so
         # (`may_rewire_stdin` is true for it).
-        rest = _operands(node, lexed, i)
+        rest = _operands(node, i)
         if head == "let":
             return any(not _pure(t) for t, _ in rest)
         if head in _DECLARERS:

@@ -619,6 +619,11 @@ ARITHMETIC_SINKS = [
     "read -r X; a=([X]=1)",
     "a+=([$X]=1)",
     "declare -a a=([X]=1)",
+    # Eleventh local review of #13.
+    "X=$1; printf -v a[X] %s z",
+    "X=$1; command test -v a[X]",
+    "a=([b[0]+$1]=1)",
+    "dash=--; getopts \"$dash\" X RANDOM -X",
     "REPLY=1; read -p x; echo $((REPLY))",
     "REPLY=1; read -r -t 1 -d '' ; echo $((REPLY))",
     "v=x; x=1; mapfile -t \"$v\"; echo $((x))",

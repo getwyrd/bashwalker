@@ -657,6 +657,10 @@ ARITHMETIC_SINKS = [
     "read </dev/null RANDOM <<<X",
     "test >/dev/null -v a[X]",
     "command >/dev/null let X",
+    # Sixteenth local review of #13.
+    'OP="-v a[X]"; [ $OP ]',
+    "true && let >/dev/null X",
+    ": | let >/dev/null X",
     "REPLY=1; read -p x; echo $((REPLY))",
     "REPLY=1; read -r -t 1 -d '' ; echo $((REPLY))",
     "v=x; x=1; mapfile -t \"$v\"; echo $((x))",

@@ -1832,6 +1832,12 @@ def _unproven_node(node: tree_sitter.Node) -> bool:
             for field_name in ("initializer", "condition", "update")
             for part in node.children_by_field_name(field_name)
         )
+    if kind == "test_command" and not _node_text(node).startswith("[["):
+        # `[ … ]` is the `test` builtin, whose words the grammar parses as an expression:
+        # judge them as `test`'s (`[ $OP ]` with OP='-v a[X]').
+        inner = _node_text(node)[1:].removesuffix("]")
+        command = parse_source(("test " + inner).encode()).root_node
+        return any(_unproven_node(n) for n in _iter_nodes(command))
     if kind == "test_command" and _node_text(node).startswith("[[") and any(
         e in _node_text(node) for e in _WORD_EXPANSIONS
     ) and any(
@@ -1952,8 +1958,14 @@ def _words_after_redirect(node: tree_sitter.Node) -> list[tuple[str, bool, str]]
     """The words the grammar hung under the redirects of the statement ``node`` is the
     body of (`let >/dev/null X`, `let <<E X`): bash passes every word after a redirect's
     target to the command. Each is (text, literal, source), in source order."""
-    parent = node.parent
-    if parent is None or parent.type != "redirected_statement" or parent.child_by_field_name("body") != node:
+    # A redirect after `a && let >x X` or `a | let >x X` hangs on the whole list or
+    # pipeline; its words still belong to the last command.
+    body, parent = node, node.parent
+    while parent is not None and parent.type in ("list", "pipeline", "negated_command"):
+        if parent.named_children[-1] != body:
+            return []
+        body, parent = parent, parent.parent
+    if parent is None or parent.type != "redirected_statement" or parent.child_by_field_name("body") != body:
         return []
     pieces = []
     for redirect in parent.children_by_field_name("redirect"):

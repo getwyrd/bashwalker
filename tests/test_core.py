@@ -53,6 +53,8 @@ UNTRUSTED = {
     "let \"a[\\$(touch m)0]\"": "subscript with a substitution",
     "declare -n r='a[$(touch m)0]'; r=1": "subscript with a substitution",
     "i='a[$(touch m)]'; echo $((i))": "subscript with a substitution",
+    "printf -v 'a[b[0]+$(touch m)0]' x": "subscript with a substitution",
+    "declare -a 'x[b[0]+$(touch m)0]=1'": "subscript with a substitution",
 }
 
 # Inputs that, together, hold every named node kind of the pinned grammar.
@@ -265,6 +267,10 @@ def test_rule3_stdin_sources():
     assert stdin_of("$x <f; cat")["cat"][0] == "unknown"
     assert stdin_of("trap 'exec <<<payload' DEBUG; cat")["cat"][0] == "unknown"
     assert stdin_of("exec; cat")["cat"] == ("terminal", None)
+    # A rewiring command is not exempt: an earlier one rewires it too (bash 5.3:
+    # `exec </x; exec bash >/dev/null` runs /x).
+    walked = bashwalker.walk("exec </tmp/payload; exec bash >/dev/null")
+    assert [i.stdin.kind for i in walked.invocations] == ["unknown", "unknown"]
     assert stdin_of("PATH=x >/dev/null")[""][0] == "unknown"  # untrusted (MISSING)
 
 

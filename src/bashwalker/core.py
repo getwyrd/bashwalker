@@ -380,7 +380,8 @@ def _bracket_redirects(node: tree_sitter.Node) -> list[tree_sitter.Node]:
 # (`printf -v 'a[$(id)0]' x`). Any such text is flagged, wherever it is; harmless text
 # such as `echo 'a[$(x)]'` is flagged too, which fails closed.
 _TEXT_KINDS = ("word", "raw_string", "string", "ansi_c_string", "concatenation")
-_HIDDEN_SUBSCRIPT = re.compile(r"\[[^\]]*(?:\$\(|`|\$\{)")
+# From any `[` on, not only to the next `]`: subscripts nest (`a[b[0]+$(id)]`).
+_HIDDEN_SUBSCRIPT = re.compile(r"\[.*?(?:\$\(|`|\$\{)", re.S)
 
 
 def _quoted_heredoc(body: tree_sitter.Node) -> bool:
@@ -1148,12 +1149,10 @@ def walk(source: str, limits: Limits = DEFAULT_LIMITS) -> Walk:
         layer.invocations = [replace(i, stdin=UNKNOWN) for i in layer.invocations]
     elif any(may_rewire_stdin(i) for i in layer.invocations):
         # A command that can change the shell's own stdin (`exec </x; sudo tee /y`) makes
-        # every other command's stdin unproven: it may run after it, in source order or on
-        # a later loop pass.
-        layer.invocations = [
-            i if may_rewire_stdin(i) else replace(i, stdin=UNKNOWN)
-            for i in layer.invocations
-        ]
+        # every command's stdin unproven: any of them may run after it, in source order or
+        # on a later loop pass, another rewiring command included (`exec </x; exec bash`
+        # runs /x).
+        layer.invocations = [replace(i, stdin=UNKNOWN) for i in layer.invocations]
     return layer
 
 

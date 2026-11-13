@@ -1456,8 +1456,8 @@ def _skip_prefixes(words: list[Word]) -> int | None:
     i = 0
     # `time` is a reserved word only as the first word, unquoted; after `command` or
     # `builtin` it is the external program, which runs what follows in a child process.
-    if words and words[0].source == "time":
-        i = 1
+    while i < len(words) and words[i].source == "time" and all(w.source == "time" or w.text in ("-p", "--") for w in words[:i]):
+        i += 1  # `time time exec …`: each leading `time` is the reserved word
         while i < len(words) and words[i].literal and words[i].text == "-p":
             i += 1
         if i < len(words) and words[i].literal and words[i].text == "--":
@@ -1559,23 +1559,35 @@ _BARE_NAME = re.compile(r"(?<![\w$#])([A-Za-z_][A-Za-z0-9_]*)")
 _PLAIN_ASSIGNMENT = re.compile(r"(?<![\w$])[A-Za-z_]\w*\s*=(?!=)")
 _ARITHMETIC_TESTS = ("-eq", "-ne", "-lt", "-le", "-gt", "-ge")
 _INTEGER_DECLARERS = ("declare", "typeset", "local")
-_SUBSTRING = re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?:(?![-=?+])(.*)\}$", re.S)
+# `${s:off:len}`, also `${!s:…}`, `${@:…}`, `${*:…}`, `${10:…}`.
+_SUBSTRING = re.compile(
+    r"\$\{!?(?:[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?|[0-9]+|[@*])\s*:(?![-=?+])(.*)\}$", re.S
+)
+# `a[i]=` inside arithmetic writes an element: only its index is read.
+_ELEMENT_ASSIGNMENT = re.compile(r"(?<![\w$])[A-Za-z_]\w*\[([^\]]*)\]\s*=(?!=)")
+_ARRAY_REFERENCE = re.compile(r"[A-Za-z_]\w*\[([^\]]*)\]")
+# A declaration operand whose name is literal even if its value is not (`PATH="$PATH:/x"`).
+_STATIC_NAME = re.compile(r"[A-Za-z_]\w*(?:\[[^\]]*\])?\+?=")
+# Builtins whose arguments can name an array element (`read 'a[x]'`, `test -v 'a[x]'`),
+# and builtins that write variables (an integer variable evaluates what they write).
+_ARRAY_ARGUMENTS = ("read", "printf", "mapfile", "readarray", "getopts", "wait", "test", "[")
+_VARIABLE_WRITERS = ("read", "printf", "mapfile", "readarray", "getopts", "wait")
 
 
 def _node_text(node: tree_sitter.Node) -> str:
     return node.text.decode("utf-8", "replace")
 
 
-def _unproven(text: str) -> bool:
+def _unproven(text: str, safe: frozenset[str] = _SAFE_NUMERIC) -> bool:
     """Whether an arithmetic text reads anything but literal numbers and bash's own
     numeric variables: a variable, a command's output or an argument."""
-    text = _LENGTH.sub(" 0 ", text)
+    text = _ELEMENT_ASSIGNMENT.sub(r" \1 ", _LENGTH.sub(" 0 ", text))
     if _COMMAND_OUTPUT.search(text) or _POSITIONAL.search(text):
         return True
     names = set(_REFERENCE.findall(text))
     rest = _INT_CONSTANT.sub(" ", _PLAIN_ASSIGNMENT.sub(" ", _REFERENCE.sub(" ", text)))
     names |= set(_BARE_NAME.findall(rest))
-    return bool(names - _SAFE_NUMERIC)
+    return bool(names - safe)
 
 
 def _in_double_bracket(node: tree_sitter.Node) -> bool:
@@ -1629,13 +1641,25 @@ def _unproven_arithmetic(root: tree_sitter.Node) -> bool:
     texts: list[str] = []
     nodes = list(_iter_nodes(root))
     integers: set[str] = set()  # declared -i anywhere: their assignments are arithmetic
+    writers = False  # a builtin or loop writes a variable it names
     for node in nodes:
+        declared: list[tuple[str, bool]] | None = None
         if node.type == "declaration_command":
-            integers |= _integer_names(_lexed(node))  # the keyword is not a named child
+            declared = _lexed(node)  # the keyword is not a named child
         elif node.type == "command":
             lexed, i = _lexed(node), _lexed_head(node)
-            if i is not None and i != UNREADABLE and lexed[i][0] in _INTEGER_DECLARERS:
-                integers |= _integer_names(lexed[i + 1 :])
+            if i is not None and i != UNREADABLE:
+                if lexed[i][0] in _INTEGER_DECLARERS:
+                    declared = lexed[i + 1 :]
+                writers = writers or lexed[i][0] in _VARIABLE_WRITERS
+        elif node.type == "for_statement":
+            writers = True  # `for x in …` and `select x in …`
+        if declared is not None:
+            if any(not lit and not _STATIC_NAME.match(t) for t, lit in declared):
+                return True  # `declare "$opt" x`: it may give -i, and then x=… is arithmetic
+            integers |= _integer_names(declared)
+    if integers and writers:
+        return True  # `declare -i x; read x`: what the builtin writes is evaluated
     for node in nodes:
         kind = node.type
         if kind == "arithmetic_expansion":
@@ -1645,6 +1669,13 @@ def _unproven_arithmetic(root: tree_sitter.Node) -> bool:
         elif kind == "c_style_for_statement":
             for field_name in ("initializer", "condition", "update"):
                 texts += [_node_text(part) for part in node.children_by_field_name(field_name)]
+        elif kind == "unary_expression" and any(
+            c.type == "test_operator" and _node_text(c) == "-v" for c in node.children
+        ):
+            # `[[ -v a[x] ]]`, `[ -v 'a[x]' ]`: the element's index is arithmetic.
+            for operand in node.named_children:
+                if operand.type != "test_operator":
+                    texts += _array_indexes(lex_word(_node_text(operand))[0])
         elif kind == "binary_expression" and _in_double_bracket(node) and any(
             c.type == "test_operator" and _node_text(c) in _ARITHMETIC_TESTS for c in node.children
         ):
@@ -1681,6 +1712,9 @@ def _unproven_arithmetic(root: tree_sitter.Node) -> bool:
             head, rest = lexed[i][0], [t for t, _ in lexed[i + 1 :]]
             if head == "let":
                 texts += rest
+            elif head in _ARRAY_ARGUMENTS:
+                for word in rest:
+                    texts += _array_indexes(word)  # `read 'a[x]'`, `printf -v 'a[x]'`
             elif head == "unset":
                 for word in rest:
                     _, _, tail = word.partition("[")
@@ -1691,5 +1725,27 @@ def _unproven_arithmetic(root: tree_sitter.Node) -> bool:
                     name, eq, value = word.partition("=")
                     if eq and name.split("[", 1)[0] in integers:
                         texts.append(value)
-    return any(_unproven(text) for text in texts)
+    # bash's numeric variables lose that meaning once unset or assigned: trust a name only
+    # when the line uses it nowhere but as `$NAME`, `${NAME}` or inside arithmetic.
+    spans = [
+        (n.start_byte, n.end_byte)
+        for n in nodes
+        if n.type in ("arithmetic_expansion", "c_style_for_statement")
+        or (n.type == "compound_statement" and n.text.startswith(b"(("))
+    ]
+    data = root.text
+    safe = frozenset(
+        name
+        for name in _SAFE_NUMERIC
+        if all(
+            any(a <= m.start() < b for a, b in spans)
+            for m in re.finditer(rb"(?<![\w$])(?<!\$\{)" + name.encode() + rb"(?!\w)", data)
+        )
+    )
+    return any(_unproven(text, safe) for text in texts)
+
+
+def _array_indexes(text: str) -> list[str]:
+    """The indexes of array elements a word names (`a[x]`, `-va[x]`), but not `@`/`*`."""
+    return [i for i in _ARRAY_REFERENCE.findall(text) if i not in ("@", "*")]
 

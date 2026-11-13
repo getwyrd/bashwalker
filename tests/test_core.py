@@ -487,6 +487,9 @@ def test_a_list_redirect_belongs_to_its_last_command():
 def test_time_is_looked_through():
     walked = bashwalker.walk("time -p git push origin main")
     assert bashwalker.command_head(walked.invocations[0]).text == "git"
+    walked = bashwalker.walk("time time -p -- git push")
+    assert bashwalker.command_head(walked.invocations[0]).text == "git"
+    assert stdin_of("time time exec 0<<<'echo X'; bash")["bash"][0] == "unknown"
     # Only as the first, unquoted word: after `command`/`builtin` it is the program.
     for command in ("command time git push", "builtin time git push", '"time" git push'):
         head = bashwalker.command_head(bashwalker.walk(command).invocations[0])
@@ -569,6 +572,19 @@ ARITHMETIC_SINKS = [
     "set -o posix; x=1; x=$X export y; echo $((x))",
     "f() { x=$X; }; x=1; f; echo $((x))",
     "option=-v; x=1; printf \"$option\" x %s \"$X\"; echo $((x))",
+    # Fourth local review of #13.
+    "unset RANDOM; RANDOM=$1; echo $((RANDOM))",
+    "opt=-i; declare \"$opt\" x; x=$X",
+    "declare -i x; read x",
+    "declare -i x; printf -v x %s \"$X\"",
+    "declare -i x; for x in \"$X\"; do :; done",
+    "read 'a[x]' <<<z",
+    "printf -v 'a[x]' %s z",
+    "test -v 'a[x]'",
+    "[ -v 'a[x]' ]",
+    "[[ -v a[x] ]]",
+    "s=t; t=abc; echo \"${!s:x}\"",
+    "set -- a b; echo \"${@:x}\"",
     "REPLY=1; read -p x; echo $((REPLY))",
     "REPLY=1; read -r -t 1 -d '' ; echo $((REPLY))",
     "v=x; x=1; mapfile -t \"$v\"; echo $((x))",
@@ -610,6 +626,8 @@ def test_arithmetic_on_literal_numbers_is_trusted():
         "declare -i y=5; y=6",
         "((x = 1)); echo $((2 * ${#y}))",
         "REPLY=1; read x <<<foo",
+        "((a[0] = 1)); test -v x; read 'a[0]' <<<z",
+        "echo $((RANDOM % 6)) ${RANDOM}",
     ):
         walked = bashwalker.walk(command)
         assert not any("arithmetic" in f for f in walked.untrusted), (command, walked.untrusted)

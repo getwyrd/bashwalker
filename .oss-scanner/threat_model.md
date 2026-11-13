@@ -48,6 +48,10 @@ project's use of it is what makes it exploitable)._
 ## Known gaps: do not report these on their own
 
 - _Each known, accepted gap, and what about it is still in scope._
+- The pre-commit secret guard (`.pre-commit-config.yaml`: machine-local Claude Code settings,
+  credential files, gitleaks) runs only in clones where `pre-commit install` was run and is
+  skipped by `git commit --no-verify`. A way to get a secret committed past an *active*
+  guard is in scope.
 
 ## How to exercise it
 

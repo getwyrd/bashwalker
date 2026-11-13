@@ -74,6 +74,15 @@ _A table: threat, mitigation, the test that proves it. A threat without a test i
 
 _What is not mitigated, why that is acceptable, and who accepted it._
 
+- **Machine-local Claude Code settings can leak secrets.** Claude Code saves each command
+  approved with "don't ask again" verbatim, tokens included, to `.claude/settings.local.json`.
+  The repository ignores it at any depth, and `.pre-commit-config.yaml` refuses to commit it
+  (or a suffixed copy), `CLAUDE.local.md`, `.credentials.json` or `.env` even when
+  force-added, and runs gitleaks on staged content. Residual: git hooks are not cloned, so
+  the guard runs only in a clone where `pre-commit install` was run, and
+  `git commit --no-verify` skips it. GitHub push protection is the backstop for a public
+  repository; a private repository on a personal account has none.
+
 ## 14.9 Gaps and their disposition
 
 _Known gaps, each with an issue or milestone that closes it._

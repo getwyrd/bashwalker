@@ -59,6 +59,8 @@ UNTRUSTED = {
     "v='x'; printf '%s' \"${v@P}\"": "@P",
     ": \"${a[@]@P}\" ${!p@P}": "@P",
     "command unset 'a[$(touch m)0]'": "unset operand with a subscript",
+    ": $(( '$(touch m)0' ))": "arithmetic context",
+    "\"unset\" 'a[$(touch m)0]'": "unset operand with a subscript",
     "declare a['$(touch m)0']=1": "subscript with a substitution",
     "a[$'\\x24(touch m)0']=1": "subscript with a substitution",
     "printf -v $'a[\\x24(touch m)0]' x": "subscript with a substitution",
@@ -147,6 +149,7 @@ def test_rule1_quoted_text_is_trusted():
         "grep 'a[bc]' f; awk '{c[$1]++}'; sed -n 's/[$]//p' f",
         "[[ $x =~ ^a[0-9]+$ ]]",
         "a['key']=1; a[1]=2; m[\"$k\"]=3; printf '%s\\n' $'a[\\t]'",
+        "echo $(( 1 + 2 )) $(( x * ${#y} ))",
     ):
         assert bashwalker.walk(command).untrusted == (), command
 
@@ -413,12 +416,26 @@ def test_function_redirects_run_at_call_time():
     assert (cat.stdin.kind, cat.in_function) == ("unknown", True)
 
 
+def test_quoted_substitutions_in_arithmetic_are_untrusted():
+    # bash 5.3 runs `touch` in each; the grammar reads only the first without an error.
+    for command in (
+        ": $(( '$(touch m)0' ))",
+        ": $(( $'\\x24(touch m)0' ))",
+        "(( $'\\x24(touch m)0' ))",
+        "for (( i='$(touch m)0'; 0; )); do :; done",
+    ):
+        assert bashwalker.walk(command).untrusted, command
+
+
 def test_declarations_behind_command_and_builtin():
     # bash 5.3 performs these assignments; the grammar parses them as plain commands.
     for command, name in (
         ("command export 'PATH=/x'", "PATH"),
         ("builtin readonly 'X=y'", "X"),
         ("command -p declare Y=z", "Y"),
+        ("\"export\" 'PATH=/x'", "PATH"),
+        ("\\readonly X=y", "X"),
+        ("ex''port 'PATH=/x'", "PATH"),
     ):
         walked = bashwalker.walk(command)
         assert [(a.name, a.role) for a in walked.assignments] == [(name, "declaration")], command

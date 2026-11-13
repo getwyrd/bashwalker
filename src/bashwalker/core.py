@@ -388,6 +388,15 @@ _ANSI_C_SIMPLE = {"a": "\a", "b": "\b", "e": "\x1b", "E": "\x1b", "f": "\f", "n"
                   "r": "\r", "t": "\t", "v": "\v"}
 
 
+_SUBSTITUTION_TEXT = re.compile(r"\$\(|`|\$\{")
+
+
+def _is_arithmetic(node: tree_sitter.Node) -> bool:
+    if node.type in ("arithmetic_expansion", "c_style_for_statement"):
+        return True
+    return node.type == "compound_statement" and node.text.startswith(b"((")
+
+
 def _ansi_c(body: str) -> str:
     """The text of a ``$'…'`` body, as bash decodes its escapes."""
 
@@ -462,6 +471,13 @@ def untrusted_features(tree: tree_sitter.Tree, source: bytes) -> tuple[str, ...]
             note("'<' or '>' inside [ ], which bash reads as a redirection")
         if node.type in _TEXT_KINDS and _HIDDEN_SUBSCRIPT.search(_decoded(node)):
             note("quoted text holding a subscript with a substitution bash may evaluate")
+        if _is_arithmetic(node):
+            # Inside `$(( ))`, `(( ))` and `for (( ))` bash expands quoted text again:
+            # `$(( '$(id)0' ))` and `$'\x24(id)'` there run `id`.
+            for inner in _iter_nodes(node):
+                if inner.type in _TEXT_KINDS and _SUBSTITUTION_TEXT.search(_decoded(inner)):
+                    note("quoted text in an arithmetic context holding a substitution")
+                    break
         if node.type == "expansion" and node.text.endswith(b"@P}"):
             # `${v@P}` expands v's value as a prompt, which runs `$(…)` in it; the value
             # is only known at run time.
@@ -840,9 +856,10 @@ def _simple(walker: Walker, node, ctx: Ctx, depth: int, bound: tuple = ()) -> No
     if kind == "command" and not has_name:
         words.insert(0, Word(text="", literal=False, source=""))
     walker.layer.words.extend(words)
-    # `command export 'PATH=x'` and `builtin unset …` are the builtins themselves, which
-    # the grammar parses as an ordinary command: look through the prefixes.
-    head = _prefixed_head(words) if kind == "command" else None
+    # `command export 'PATH=x'`, `"export" 'PATH=x'` and `builtin unset …` are the
+    # builtins themselves, which the grammar parses as an ordinary command: look through
+    # the prefixes and the quoting.
+    head = _builtin_head(words) if kind == "command" else None
     if head is not None and words[head].text in DECLARATION_BUILTINS:
         for word in words[head + 1 :]:
             _declaration_operand(walker, word.source, assignments)
@@ -1203,15 +1220,15 @@ def walk(source: str, limits: Limits = DEFAULT_LIMITS) -> Walk:
 DECLARATION_BUILTINS = ("declare", "typeset", "local", "export", "readonly")
 
 
-def _prefixed_head(words: list[Word]) -> int | None:
-    """The index of the word a ``command``/``builtin`` prefix runs, when there is a
-    literal prefix; None otherwise."""
+def _builtin_head(words: list[Word]) -> int | None:
+    """The index of the literal word bash runs as the command, after any ``command`` /
+    ``builtin`` prefixes and their options; None when that word is not literal."""
     i = 0
     while i < len(words) and words[i].literal and words[i].text in BUILTIN_PREFIXES:
         i += 1
         while i < len(words) and words[i].literal and words[i].text.startswith("-"):
             i += 1
-    if i == 0 or i >= len(words) or not words[i].literal:
+    if i >= len(words) or not words[i].literal or not words[i].source:
         return None
     return i
 

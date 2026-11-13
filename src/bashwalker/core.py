@@ -405,6 +405,14 @@ _ANSI_C_SIMPLE = {"a": "\a", "b": "\b", "e": "\x1b", "E": "\x1b", "f": "\f", "n"
 _SUBSTITUTION_TEXT = re.compile(r"\$\(|`|\$\{")
 
 
+def _holds_substitution_text(value: Word | None) -> bool:
+    """A value whose text spells ``$(``, a backtick or ``${`` that the tree did not parse
+    as one: quoted (literal) text, or ``$'…'`` text that decodes to it."""
+    if value is None or not _SUBSTITUTION_TEXT.search(value.text):
+        return False
+    return value.literal or "$'" in value.source
+
+
 def _is_arithmetic(node: tree_sitter.Node) -> bool:
     if node.type in ("arithmetic_expansion", "c_style_for_statement"):
         return True
@@ -1241,6 +1249,10 @@ def walk(source: str, limits: Limits = DEFAULT_LIMITS) -> Walk:
     walker = Walker(data, layer, limits)
     walker.visit(tree.root_node, Ctx(stdin=TERMINAL), 0)
     _check_walk(tree, walker)
+    if any(_holds_substitution_text(a.value) for a in layer.assignments):
+        # A quoted value that spells a substitution: bash may evaluate it later, also
+        # once pieces are joined (`x='a['; x+='$(id)]'; : $((x))`).
+        walker.note_untrusted("assigned text holding a substitution bash may evaluate")
     if any(a.name in CODE_VARIABLES for a in layer.assignments) or any(
         _NAMES_CODE_VARIABLE.match(w.text) for w in layer.words
     ):
@@ -1275,7 +1287,8 @@ CODE_VARIABLES = (
     "FCEDIT",  # `fc` runs it as the editor
 )
 _NAMES_CODE_VARIABLE = re.compile(
-    r"(?:-[A-Za-z]*v)?(?:" + "|".join(CODE_VARIABLES) + r")(?:\[.*\])?(?:\+?=.*)?$", re.S
+    # Also attached to any options (`printf -vPS4`, `read -aPS4`).
+    r"(?:-[A-Za-z]*)?(?:" + "|".join(CODE_VARIABLES) + r")(?:\[.*\])?(?:\+?=.*)?$", re.S
 )
 
 
@@ -1320,7 +1333,7 @@ def command_head(invocation: Invocation) -> Word | None:
 
 
 # Builtins that run shell code the walker does not see.
-SHELL_RUNNERS = ("eval", "source", ".")
+SHELL_RUNNERS = ("eval", "source", ".", "fc")  # `fc` re-runs history lines
 # Builtins that install code to run later, which the walker does not see (`trap '…' DEBUG`
 # runs before every later command).
 CODE_LATER = ("trap",)

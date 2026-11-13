@@ -79,6 +79,9 @@ UNTRUSTED = {
     "read $'P\\x534' <<<x": "bash runs as code",
     "for PS4 in x; do set -x; :; done": "bash runs as code",
     "select PS1 in a; do :; done": "bash runs as code",
+    "read -aPS4 <<<x; set -x; :": "bash runs as code",
+    "x='a['; x+='$(touch m)]'; : $((x))": "assigned text holding a substitution",
+    "x=$'\\x24(touch m)'": "assigned text holding a substitution",
     "declare a['$(touch m)0']=1": "subscript with a substitution",
     "a[$'\\x24(touch m)0']=1": "subscript with a substitution",
     "printf -v $'a[\\x24(touch m)0]' x": "subscript with a substitution",
@@ -169,6 +172,7 @@ def test_rule1_quoted_text_is_trusted():
         "a['key']=1; a[1]=2; m[\"$k\"]=3; printf '%s\\n' $'a[\\t]'",
         "echo $(( 1 + 2 )) $(( x * ${#y} ))",
         "echo \"$PS1\" ${PS4:-x}; MYPS4=1",
+        "x=$(date); y=\"$(id -u)\"; z=`pwd`; w=${HOME}",
     ):
         assert bashwalker.walk(command).untrusted == (), command
 
@@ -308,6 +312,8 @@ def test_rule3_stdin_sources():
     for command in ("mapfile -C 'trap x DEBUG' -c 1 a; cat", "readarray -tC f a; cat", "bind -x '\"\\C-x\":f'; cat", "mapfile $o a; cat"):
         assert stdin_of(command)["cat"][0] == "unknown", command
     assert stdin_of("mapfile -t a; cat")["cat"] == ("terminal", None)
+    # `fc` re-runs history lines in the current shell (interactive bash 5.3).
+    assert stdin_of("fc -s; cat")["cat"][0] == "unknown"
     # A rewiring command is not exempt: an earlier one rewires it too (bash 5.3:
     # `exec </x; exec bash >/dev/null` runs /x).
     walked = bashwalker.walk("exec </tmp/payload; exec bash >/dev/null")

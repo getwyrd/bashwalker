@@ -214,6 +214,23 @@ def test_rule3_stdin_sources():
     assert stdin_of("cat <<<'x\n'")["cat"] == ("literal", "x\n\n")
     assert stdin_of("cat <<'E'\n$x\nE")["cat"] == ("literal", "$x\n")
     assert stdin_of("cat <<E\nplain\nE")["cat"] == ("literal", "plain\n")
+    # A compound command's commands share its feed, so none of them is proven to read
+    # all of it (bash 5.3: `{ read -r -N 1 s; bash; } <<<'#printf X'` runs `printf`).
+    # The grammar reads a here-doc on a compound command; a here-string there is a syntax
+    # error to it (an untrusted tree), so both forms end up unknown.
+    for feed in ("<<'E'\n#printf X\nE", "<<E\n#printf X\nE", "<<<'#printf X'"):
+        for body in (
+            "{ read -r -N 1 skipped; bash; }",
+            "{ bash; }",
+            "(bash)",
+            "for i in 1 2; do bash; done",
+            "while read -r l; do bash; done",
+            "if true; then bash; fi",
+        ):
+            command = f"{body} {feed}"
+            assert stdin_of(command)["bash"][0] == "unknown", command
+    assert not bashwalker.walk("{ bash; } <<'E'\nx\nE").untrusted  # the here-doc parses
+    assert stdin_of("{ cat; } <f")["cat"] == ("file", "f")  # a file names its source only
     assert stdin_of("cat <<E\n$x\nE")["cat"][0] == "unknown"
     assert stdin_of("cat <<-E\n\t$(rm x)\nE")["cat"][0] != "literal"
     assert stdin_of("cat")["cat"] == ("terminal", None)

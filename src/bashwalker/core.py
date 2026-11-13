@@ -107,9 +107,11 @@ class Stdin:
     - ``file``: ``<`` (or ``0<``) from a literal path; ``value`` is the path and ``via``
       the redirect that names it, so a caller that rejects that redirect can treat this
       stdin as ``unknown``;
-    - ``literal``: a here-string whose word is literal (``value`` is the word with the
-      newline bash appends), or a here-doc whose delimiter is quoted (or unquoted with no
-      ``$``, `` ` `` or ``\\`` in its body; ``value`` is the body);
+    - ``literal``: the simple command's own here-string whose word is literal (``value``
+      is the word with the newline bash appends), or its own here-doc whose delimiter is
+      quoted (or unquoted with no ``$``, `` ` `` or ``\\`` in its body; ``value`` is the
+      body). A literal feed on a compound command gives the commands inside ``unknown``:
+      they share it, and one may consume part of it before another reads;
     - ``unknown``: everything else (function bodies, ``0>&N``, ``0>&-``, a stdin
       redirect the walker cannot place, any command in untrusted text).
 
@@ -522,11 +524,17 @@ def _children(walker: Walker, node, ctx: Ctx, depth: int, bound: tuple = ()) -> 
 
 def _apply_compound(walker: Walker, bound: tuple, ctx: Ctx, depth: int) -> Ctx:
     """Redirects on a compound command: record them, and let them set the stdin the
-    commands inside inherit."""
+    commands inside inherit.
+
+    A literal feed is never passed on: the commands inside share it, so one can consume
+    part of it before the next reads (``{ read -N 1 s; bash; } <<<'#cmd'`` gives ``bash``
+    ``cmd``), and a loop reads on where the last pass stopped. They get ``unknown``."""
     stdin = ctx.stdin
     for node in bound:
         for record in walker.visit(node, ctx, depth + 1):
             stdin = _stdin_after(record, stdin)
+    if stdin.kind == "literal":
+        stdin = UNKNOWN
     return replace(ctx, stdin=stdin)
 
 

@@ -62,6 +62,9 @@ REDIRECT_OPERATORS = frozenset(
     (">", ">>", ">|", "&>", "&>>", "<>", ">&", "<&", ">&-", "<&-", "<", "<<", "<<-", "<<<")
 )
 INPUT_OPERATORS = ("<", "<&", "<&-")  # default descriptor 0
+# Operators that take no descriptor: bash passes a number written right before them to the
+# command (`printf %s 0&>out` writes `0`).
+NO_DESCRIPTOR_OPERATORS = ("&>", "&>>")
 _PLAIN_DELIMITER = re.compile(r"[A-Za-z0-9_]+")
 _QUOTED_DELIMITER = re.compile(r"'[^']*'|\"[^\"\\$`]*\"")
 LOW_FD = ("0", "1", "2")
@@ -663,7 +666,9 @@ def _simple(walker: Walker, node, ctx: Ctx, depth: int, bound: tuple = ()) -> No
     # word written against a redirect (`rm -rf />/dev/null`) stays an argument.
     fd_tokens = set()
     for r in redirect_nodes:
-        if r.child_by_field_name("descriptor") is None:
+        if r.child_by_field_name("descriptor") is not None:
+            continue
+        if _operator(r) not in NO_DESCRIPTOR_OPERATORS:
             token = walker.adjacent_token(r.start_byte)
             if token is not None and _is_descriptor_token(token[1]):
                 fd_tokens.add((token[0], r.start_byte))
@@ -820,6 +825,8 @@ def _descriptor(walker: Walker, node) -> str | None:
     child = node.child_by_field_name("descriptor")
     if child is not None:
         return walker.text(child)
+    if _operator(node) in NO_DESCRIPTOR_OPERATORS:
+        return None
     token = walker.adjacent_token(node.start_byte)
     if token is None or not _is_descriptor_token(token[1]):
         return None

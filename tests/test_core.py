@@ -255,6 +255,11 @@ def test_words_next_to_redirects_are_kept():
         assert words(f"printf x {token}>f") == (["printf", "x"], [(token, ">")]), token
     for token in ("١", "٣", "{a,b}", "{x-y}", "{1x}", "{}", "{a[]}", "{a[x]]}", "{a[1][2]}", "{é}"):
         assert words(f"rm {token}>f") == (["rm", token], [(None, ">")]), token
+    # `&>` and `&>>` take no descriptor: a number or `{name}` right before them is an
+    # argument (bash 5.3: `printf "<%s>" 0&>out` writes `<0>`).
+    for token in ("0", "2", "{fd}"):
+        for op in ("&>", "&>>"):
+            assert words(f"rm {token}{op}f") == (["rm", token], [(None, op)]), (token, op)
     (invocation,) = bashwalker.walk("PATH=/tmp/evil >/dev/null").invocations
     assert [(a.name, a.role) for a in invocation.assignments] == [("PATH", "standalone")]
     assert [w.text for w in invocation.words] == [""]

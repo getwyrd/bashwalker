@@ -1947,6 +1947,11 @@ def _unproven_node(node: tree_sitter.Node) -> bool:
         )
     if kind.endswith("_redirect") and _unproven_descriptor(node):
         return True  # `: {a[X]}>x`: bash evaluates the element's index
+    if kind == "command_substitution" and _node_text(node).startswith("$(("):
+        # `$((X))` in an unquoted here-doc body parses as a substitution of a subshell
+        # (tree-sitter-bash#325); bash reads it as arithmetic.
+        text = _node_text(node)
+        return not text.endswith("))") or not _pure(text[3:-2])
     if kind == "subshell" and _node_text(node).startswith("(("):
         # `time ((X))`, `! ((X))`: bash's arithmetic command, which the grammar parses as
         # nested subshells after a reserved word.

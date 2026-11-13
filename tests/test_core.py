@@ -683,6 +683,8 @@ ARITHMETIC_SINKS = [
     "time [[ X -eq 0 ]]",
     "time RANDOM=$X",
     "coproc let X; wait",
+    # Twenty-third local review of #13.
+    "cat <<EOF\n$((X))\nEOF",
     'a=(-v "b[X]"); test "${a[@]:0}"',
 
     "REPLY=1; read -p x; echo $((REPLY))",

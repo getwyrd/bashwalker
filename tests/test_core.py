@@ -186,7 +186,7 @@ def test_rule1_quoted_text_is_trusted():
         "grep 'a[bc]' f; awk '{c[$1]++}'; sed -n 's/[$]//p' f",
         "[[ $x =~ ^a[0-9]+$ ]]",
         "a[1]=2; printf '%s\\n' $'a[\\t]'",
-        "echo $(( 1 + 2 )) $(( 2 * ${#y} ))",
+        "echo $(( 1 + 2 )) $(( 2 * 3 ))",
         "echo \"$PS1\" ${PS4:-x}; MYPS4=1",
         "x=$(date); y=\"$(id -u)\"; z=`pwd`; w=${HOME}",
         "x=$HOME; y=\"$x/b\"; z=\"${a[0]}$1$@$?\"",
@@ -603,6 +603,14 @@ ARITHMETIC_SINKS = [
     "declare -i MAPFILE; mapfile",
     # Seventh local review of #13.
     "eval 'unset OPTIND; OPTIND=$X'; echo $((OPTIND))",
+    # Eighth local review of #13.
+    "command export OPTIND=$X",
+    "\"export\" OPTIND=$X",
+    "mapfile -C 'unset OPTIND; OPTIND=$X; :' -c 1 a <<<z; echo $((OPTIND))",
+    'name=OPTIND; export "$name=$X"',
+    "declare -i 'n=X'",
+    "read 'a[OPTIND[0]-1+X]' <<<z",
+    'a[0]=abc; echo "${a[OPTIND[0]-1]:X}"',
     "REPLY=1; read -p x; echo $((REPLY))",
     "REPLY=1; read -r -t 1 -d '' ; echo $((REPLY))",
     "v=x; x=1; mapfile -t \"$v\"; echo $((x))",
@@ -614,6 +622,12 @@ ARITHMETIC_SINKS = [
 # the line, because any command in between may change it (a function from the session,
 # `eval`, `cd`, `unset`); associative keys count as arithmetic too (fail closed).
 ARITHMETIC_UNPROVEN = [
+    # Ultra-strict (#12): any name or `$` in arithmetic, bash's numeric variables too.
+    "echo $((RANDOM % 6)) $((SECONDS + LINENO)) $(($# + $?))",
+    "echo $(( 2 * ${#y} ))",
+    "((x = 1))",
+    "declare -i y=5",
+    "RANDOM=1",
     "for ((i=0; i<3; i++)); do echo $i; done",
     "n=5; echo $((n * 2))",
     "i=0; while ((i < 3)); do ((i++)); done",
@@ -636,23 +650,14 @@ def test_arithmetic_on_unproven_values_is_untrusted(command):
 
 def test_arithmetic_on_literal_numbers_is_trusted():
     for command in (
-        "echo $((1 + 2)) $[3] $((0x1f + 16#ff + 2#101))",
-        "echo $((RANDOM % 6)) $((SECONDS + LINENO)) $(($# + $?))",
-        "a=(1 2); echo ${a[0]} ${a[@]} ${#a[*]} ${a[1]}",
-        "s=abc; echo ${s:1:2} ${s: -1} ${x:-d} ${x:=d} ${#s}",
-        "[ \"$X\" -eq 0 ]; test \"$X\" -eq 0",
-        "declare -i y=5; y=6",
-        "((x = 1)); echo $((2 * ${#y}))",
-        "REPLY=1; read x <<<foo",
-        "((a[0] = 1)); test -v x; read 'a[0]' <<<z",
-        "echo $((RANDOM % 6)) ${RANDOM}",
-        "export A=1 {fd}>x; export \"$x\"; declare -a {fd}>x; unset B {fd}>x; read y {fd}>x",
-        "PATH=x 0<f; HOME=/dev {fd}>x",
-        "x || unset B {fd}>x; y && read z {fd}>x",
-        'declare -p "$name"; typeset -f "$f"; declare -p RANDOM; echo $((RANDOM))',
-        'getopts "$OPTSTRING" opt; RANDOM=1; echo $((RANDOM)) ${!prefix*} ${!arr[@]}',
-        "printf 'a[x]\\n'; declare -i x; printf ok; read y <<<ok",
-        "let 'RANDOM % 2'; [[ RANDOM -gt 0 ]]; echo ${a[RANDOM]} $((BASH_SUBSHELL + OPTIND + HISTCMD))",
+        "echo $((1 + 2)) $[3] $((0x1f + 16#ff + 2#101)) $(( (4 << 1) % 3 ))",
+        "for ((;;)); do break; done; ((1))",
+        "a=(1 2); echo ${a[0]} ${a[@]} ${#a[*]} ${a[1]} ${a[1+1]}",
+        "s=abc; echo ${s:1:2} ${s: -1} ${x:-d} ${x:=d} ${#s} ${x/a/b} ${x#a}",
+        "[ \"$X\" -eq 0 ]; test \"$X\" -eq 0; [[ 1 -eq 1 ]]",
+        "REPLY=1; read x <<<foo; printf -v y %s z; read 'a[0]' <<<z",
+        "declare -p \"$name\"; typeset -f f; export A=1 PATH=\"$PATH:/x\"",
+        "unset a[0] x; test -v x; [[ -v a[1] ]]",
     ):
         walked = bashwalker.walk(command)
         assert not any("arithmetic" in f for f in walked.untrusted), (command, walked.untrusted)

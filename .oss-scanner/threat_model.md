@@ -68,9 +68,9 @@ facts by a caller.
 
 ## Known gaps: do not report these on their own
 
-- Rule 1 lists the grammar disagreements found so far; the differential oracle test that
-  would find the rest is not here yet (nl-shell#191, moving here). A new disagreement that
-  gives a wrong fact without being flagged is still in scope.
+- Rule 1 lists the grammar disagreements found so far; the differential test checks it
+  against bash, `bash -n` and shfmt by sampling generated lines, not exhaustively. A new
+  disagreement that gives a wrong fact without being flagged is in scope.
 - Arithmetic on a value from run time is flagged unless the walker proves it is a number
   (#6). An integer attribute or an unset `RANDOM`-like variable left by an earlier command
   in a persistent session is session state the walker cannot see; a hidden command reached

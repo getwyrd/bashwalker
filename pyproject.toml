@@ -9,7 +9,7 @@ description = "A bash command line in, proven facts per simple command out: a fa
 readme = "README.md"
 license = "Apache-2.0"
 authors = [{ name = "Eduard Ralph", email = "eduard@ralphovi.net" }]
-requires-python = ">=3.12"
+requires-python = ">=3.11"
 dependencies = [
     # Pinned exactly: every fact the walker proves depends on how this grammar reads
     # bash. A consumer pins bashwalker exactly for the same reason.

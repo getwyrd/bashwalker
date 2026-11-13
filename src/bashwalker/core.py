@@ -993,6 +993,8 @@ def _simple(walker: Walker, node, ctx: Ctx, depth: int, bound: tuple = ()) -> No
     # builtins themselves, which the grammar parses as an ordinary command: look through
     # the prefixes and the quoting.
     head = _builtin_head(words, _time_reserved(node)) if kind == "command" else None
+    if kind == "command" and _assigns_after_time(words, _time_reserved(node)):
+        walker.note_untrusted("assignment after time, which the walker does not record")
     if kind == "command" and _skip_prefixes(words, _time_reserved(node)) == UNREADABLE:
         walker.note_untrusted("command or builtin prefix with an option the walker cannot read")
     declarer = 0 if kind == "declaration" else head
@@ -1457,6 +1459,21 @@ UNREADABLE = -1
 _ASSIGNMENT_WORD = re.compile(r"[A-Za-z_]\w*(?:\[[^\]]*\])?\+?=")
 
 
+def _assigns_after_time(words: list[Word], time_reserved: bool) -> bool:
+    """Whether an assignment follows the reserved `time` (`time PATH=/tmp git`): the
+    grammar parses it as a word, so it is in no ``Assignment``."""
+    i = 0
+    while time_reserved and i < len(words) and words[i].source == "time":
+        i += 1
+        if i < len(words) and words[i].source == "-p":
+            i += 1
+        if i < len(words) and words[i].source == "--":
+            i += 1
+        if i < len(words) and _ASSIGNMENT_WORD.match(words[i].source):
+            return True
+    return False
+
+
 def _time_reserved(node: tree_sitter.Node) -> bool:
     """Whether a leading `time` in this command node is bash's reserved word: only when
     nothing (an assignment, a redirect) comes before it."""
@@ -1588,6 +1605,7 @@ _STATIC_NAME = re.compile(r"[A-Za-z_]\w*(?:\[[^\]]*\])?\+?=")
 # Builtins that write variables they are given.
 _VARIABLE_WRITERS = ("read", "printf", "mapfile", "readarray", "getopts", "wait")
 # `${!x*}`, `${!x@}`, `${!a[@]}`, `${!a[*]}` list names or keys and evaluate nothing.
+_DEFAULT_ASSIGNMENT = re.compile(r"\$\{([A-Za-z_]\w*)(?:\[[^\]]*\])?:?=")
 _INDIRECT_LISTING = re.compile(r"\$\{![A-Za-z_]\w*(?:[*@]|\[[*@]\])\}$")
 
 
@@ -1901,6 +1919,9 @@ def _unproven_node(node: tree_sitter.Node) -> bool:
         return bool(causes - {"glob"}) or not _index_pure(text)  # `${a[$"1"]}`: translated
     if kind == "expansion":
         text = _node_text(node)
+        assigned = _DEFAULT_ASSIGNMENT.match(text)
+        if assigned and assigned.group(1) in _BASH_INTEGERS:
+            return True  # `${MAILCHECK:=$1}` assigns to an integer variable
         if text.startswith("${!") and not _INDIRECT_LISTING.match(text):
             return True  # `${!name}`: name's value may carry a subscript bash evaluates
         offset = _substring_offset(text)

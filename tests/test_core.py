@@ -492,6 +492,8 @@ def test_time_is_looked_through():
     # Prefix assignments may follow the reserved word (bash 5.3 runs `git` here).
     walked = bashwalker.walk("time GIT_DIR=x A=$y git push")
     assert bashwalker.command_head(walked.invocations[0]).text == "git"
+    # The grammar parses those assignments as words, so they are in no Assignment.
+    assert any("assignment after time" in f for f in walked.untrusted)
     assert stdin_of("time time exec 0<<<'echo X'; bash")["bash"][0] == "unknown"
     # Only as the first, unquoted word: after `command`/`builtin` it is the program.
     # Its options too: `time "-p" git push` runs `-p` (bash 5.3).
@@ -682,6 +684,7 @@ ARITHMETIC_SINKS = [
     "time RANDOM=$X",
     "coproc let X; wait",
     'a=(-v "b[X]"); test "${a[@]:0}"',
+
     "REPLY=1; read -p x; echo $((REPLY))",
     "REPLY=1; read -r -t 1 -d '' ; echo $((REPLY))",
     "v=x; x=1; mapfile -t \"$v\"; echo $((x))",
@@ -696,6 +699,10 @@ ARITHMETIC_UNPROVEN = [
     # Ultra-strict (#12): any name or `$` in arithmetic, bash's numeric variables too.
     "echo $((RANDOM % 6)) $((SECONDS + LINENO)) $(($# + $?))",
     "echo $(( 2 * ${#y} ))",
+    # `:=` assigns to an integer variable; it runs in an interactive bash 5.3 started with
+    # MAILCHECK set and empty (the probe's non-interactive bash has no MAILCHECK).
+    ': "${MAILCHECK:=$X}"',
+    ': "${OPTIND=$X}"',
     # A translated index: a message catalog may turn `$"1"` into a name.
     ': "${a[$"1"]}"',
     "((x = 1))",

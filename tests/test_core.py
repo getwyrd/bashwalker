@@ -41,6 +41,9 @@ UNTRUSTED = {
     "declare -a 'x[$(touch m)]=1'": "subscript bash evaluates",
     "export \"x[$i]=1\"": "subscript bash evaluates",
     "declare -a >/dev/null 'x[$(touch m)]=1'": "subscript bash evaluates",
+    "unset 'a[$(touch m)0]'": "unset operand with a subscript",
+    "unset >/dev/null 'm[$(touch m)]'": "unset operand with a subscript",
+    "unset -v a[$i]": "unset operand with a subscript",
 }
 
 # Inputs that, together, hold every named node kind of the pinned grammar.
@@ -335,6 +338,17 @@ def test_declaration_operands_after_a_redirect():
         ("B", "declaration"),
         ("SUDO_PROMPT", "declaration"),
     ]
+
+
+def test_redirect_substitutions_read_the_earlier_redirects():
+    # bash 5.3: `: <payload >"$(bash)"` runs payload in bash.
+    walked = bashwalker.walk(': </tmp/payload >"$(bash)"')
+    inner = next(i for i in walked.invocations if i.words[0].text == "bash")
+    assert (inner.stdin.kind, inner.stdin.value) == ("file", "/tmp/payload")
+    walked = bashwalker.walk('{ :; } </tmp/payload >"$(bash)"')
+    inner = next(i for i in walked.invocations if i.words[0].text == "bash")
+    assert (inner.stdin.kind, inner.stdin.value) == ("file", "/tmp/payload")
+    assert stdin_of('>"$(bash)" cat')["bash"] == ("terminal", None)  # nothing before it
 
 
 def test_function_redirects_run_at_call_time():

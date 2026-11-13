@@ -531,7 +531,8 @@ def _apply_compound(walker: Walker, bound: tuple, ctx: Ctx, depth: int) -> Ctx:
     ``cmd``), and a loop reads on where the last pass stopped. They get ``unknown``."""
     stdin = ctx.stdin
     for node in bound:
-        for record in walker.visit(node, ctx, depth + 1):
+        # Each redirect's substitutions read the stdin the earlier ones set.
+        for record in walker.visit(node, replace(ctx, stdin=stdin), depth + 1):
             stdin = _stdin_after(record, stdin)
     if stdin.kind == "literal":
         stdin = UNKNOWN
@@ -755,9 +756,15 @@ def _simple(walker: Walker, node, ctx: Ctx, depth: int, bound: tuple = ()) -> No
             )
     for child in others + unread + [w for w in fd_words if w.is_named]:
         walker.visit(child, ctx, depth + 1)
+    # bash performs redirects left to right and expands each just before, so a
+    # substitution in one reads the stdin the earlier ones set (`: </x >"$(bash)"` runs
+    # /x).
     records: list[Redirect] = []
+    redirect_stdin = ctx.stdin
     for child in redirect_nodes:
-        records.extend(walker.visit(child, ctx, depth + 1))
+        for record in walker.visit(child, replace(ctx, stdin=redirect_stdin), depth + 1):
+            records.append(record)
+            redirect_stdin = _stdin_after(record, redirect_stdin)
     # Words the grammar put after a redirect target are the command's (`cat <a b`).
     recovered: list[tuple[int, int]] = []
     for record in records:
@@ -785,6 +792,13 @@ def _simple(walker: Walker, node, ctx: Ctx, depth: int, bound: tuple = ()) -> No
     if kind == "command" and not has_name:
         words.insert(0, Word(text="", literal=False, source=""))
     walker.layer.words.extend(words)
+    if kind == "unset":
+        # bash evaluates an array subscript in an unset operand after quote removal, so a
+        # quoted operand runs what the tree never parsed (`unset 'a[$(id)0]'`).
+        for word in words[1:]:
+            match = _SUBSCRIPTED.fullmatch(word.text)
+            if match and not _NUMBER_SUBSCRIPT.fullmatch(match.group(1)):
+                walker.note_untrusted("unset operand with a subscript bash evaluates")
 
     stdin = ctx.stdin
     for record in records:
@@ -803,6 +817,7 @@ def _simple(walker: Walker, node, ctx: Ctx, depth: int, bound: tuple = ()) -> No
 
 _DECLARED = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)(\[[^\]]*\])?\+?=(.*)", re.S)
 _NUMBER_SUBSCRIPT = re.compile(r"\[[0-9]+\]")
+_SUBSCRIPTED = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(\[.*\])", re.S)
 
 
 def _declared(source: str) -> tuple[Assignment | None, bool]:

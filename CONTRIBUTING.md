@@ -45,9 +45,10 @@ milestone. Report security problems privately (see [SECURITY.md](SECURITY.md)).
 
 ## Running checks
 
-_TODO: name the single command that runs every check._ The required `gate` job in
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs the same command; until it is
-set up, `gate` fails every pull request.
+Every check runs with `python3 -m pytest` from the repo root. First-time setup:
+`python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'`. Tests import from `src/`
+directly, so they always run against the tree they sit in. The required `gate` job in
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs the same command.
 
 The status checks `main` requires are listed in
 [`.github/required-checks.txt`](.github/required-checks.txt). A maintainer can see whether

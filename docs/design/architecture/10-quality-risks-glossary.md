@@ -15,7 +15,7 @@ tags:
 |---|---|---|
 | A line hides a command in a form the grammar misreads | `walked.untrusted` is not empty, or the command is among the invocations | 1 Sound |
 | A run-time value reaches arithmetic (`echo $((X))`) | The tree is untrusted for every `ARITHMETIC_SINKS` entry | 1 Sound |
-| A grammar update adds a node kind | Every walk that meets it raises `ParseRefused` until a handler exists | 1 Sound |
+| A grammar update adds a node kind | The test suite fails until the corpus covers the kind, so the pin can't move unreviewed | 1 Sound |
 | An 8 KiB line of nested substitutions | Refused or walked within the work budget; nothing over the cap is parsed | 2 Bounded |
 | A refused line holds a secret or escape codes | The `ParseRefused` message has none of the input | 2 Bounded |
 | `cd /tmp && git push origin HEAD:main 2>/dev/null` | Trusted; two invocations; every word literal | 3 Useful |

@@ -43,15 +43,17 @@ literal numbers. Any of these makes the tree untrusted:
 
 ## 8.2 Rule 2: no node skipped
 
-The `Walker` has one handler for every named node kind in the pinned grammar (`HANDLERS`).
+The `Walker` has a handler for every named node kind in the pinned grammar (`HANDLERS`):
+a specific one where the kind matters, otherwise one that walks the node's children.
 After each walk, `_check_walk()` confirms two things:
 - every named node was visited exactly once;
 - every `command`, `declaration_command` and `unset_command` produced exactly one
   `Invocation`.
 
-A miss raises `ParseRefused`. A grammar update that adds a node kind therefore fails loudly
-instead of hiding a command. Tests remove each handler in turn and check that the walk
-refuses.
+A miss raises `ParseRefused`. Tests remove each handler in turn and check that the walk
+refuses. A node kind that a grammar update adds is walked through its children at run time.
+The test suite fails until its corpus has a line with that kind
+(`test_rule2_removed_handler_is_refused`), so a pin move can't add one unreviewed.
 
 ## 8.3 Rule 3: literal words and proven stdin
 
@@ -85,8 +87,10 @@ generates command lines and compares the walker with three oracles:
   catch a line that escapes the wrapper.
 
 For each line bash accepts and the walker trusts, every simple command an oracle sees must
-be among the walker's invocations, and every word the walker calls literal must match.
-Accepted differences are listed with a reason in `tests/differential/known.toml`. CI runs
+be among the walker's invocations, and every word the walker calls literal must match. One
+exception is built into the comparison: a `[ … ]` test is a `test_command` node that gives
+no invocation, so oracle commands headed by `[` are not compared. Other accepted differences
+are listed with a reason in `tests/differential/known.toml`. CI runs
 it on bash 5.1, 5.2 and 5.3.
 
 ## 8.6 Policy stays with the caller

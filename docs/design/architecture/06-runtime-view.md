@@ -53,7 +53,8 @@ nl-shell asks for confirmation, and pdca-harness's guard blocks.
 - **A command that may change the shell's own stdin.** `may_rewire_stdin` covers:
   - `exec` with a redirect;
   - `eval`, `source`, `.`, `fc`, `trap` and `alias`;
-  - a builtin with a code option (`mapfile -C`, `complete -C`/`-F`, `bind -x`);
+  - a builtin with a code option (`mapfile`/`readarray -C`, `complete`/`compgen -C`/`-F`,
+    `bind -x`);
   - a non-literal command word.
 
   Every invocation's stdin then becomes `unknown`, because any of them may run after it.

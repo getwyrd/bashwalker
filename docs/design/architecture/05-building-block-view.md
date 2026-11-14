@@ -49,7 +49,7 @@ graph TB
 | `Stdin` and the stdin logic in `Walker` | Rule 3: stdin is `terminal`, `pipe` or `literal` only for the listed forms, else `unknown` | Yes |
 | `_unproven_arithmetic()` | Rule 1 for arithmetic: untrusted unless every arithmetic context holds literal numbers (#12) | Yes |
 | `command_head()`, `may_rewire_stdin()` | The command that runs after `command`, `builtin` and `time` prefixes; whether a command can change the shell's own stdin | Yes |
-| Fact types | Frozen dataclasses the caller reads; no behaviour | No, but their meaning is the API |
+| Fact types | `Invocation`, `Word`, `Assignment`, `Redirect`, `Stdin` and `Limits` are frozen dataclasses; `Walk` is a plain dataclass whose lists the walk fills. No behaviour | No, but their meaning is the API |
 
 ## 5.2 Build-time components
 

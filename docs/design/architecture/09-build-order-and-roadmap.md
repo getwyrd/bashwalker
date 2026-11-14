@@ -16,7 +16,7 @@ tags:
 | Extraction and hardening | The walker works as a package that reports facts only (ADR-0007) and agrees with bash, shfmt and bash's reprint on generated lines (§8.5) | |
 | Python 3.11 support | Tools on older supported Pythons can embed it | v0.1.0 |
 | Arithmetic rule (ADR-0009) | No command hidden in arithmetic is reported as trusted | v0.1.1 |
-| PyPI publishing (#25) | Callers install it with `pip` and pin it exactly (§7) | first PyPI release |
+| PyPI publishing (#24) | Callers install it with `pip` and pin it exactly (§7) | first PyPI release |
 | `coproc` facts (#26) | `coproc` lines give correct facts or come back untrusted | |
 | Bash versions (proposal 0001, #27) | Facts hold for every supported bash version a caller names | **[OPEN]** |
 | Bash 5.0 (#29) | Facts hold for 5.0 as well; nothing older is supported | **[OPEN]** |

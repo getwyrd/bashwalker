@@ -12,7 +12,7 @@ tags:
 ## 7.1 What the user gets
 
 bashwalker is to be deployed as a package on PyPI, which callers install and pin exactly
-(`pip install bashwalker==X.Y.Z`). The publishing workflow doesn't exist yet (#25). The plan
+(`pip install bashwalker==X.Y.Z`). The publishing workflow doesn't exist yet (#24). The plan
 is that each release tag builds an sdist and a pure-Python wheel and publishes them with
 PyPI's trusted publishing (OIDC, no stored token).
 

@@ -28,7 +28,7 @@ tags:
 - **One maintainer** under GOVERNANCE.md's bootstrap rules.
 - **Apache License 2.0 with DCO sign-off** (ADR-0002, Proposed). The `dco` check fails a
   pull request with an unsigned commit.
-- **Public repository** in the getwyrd organisation; releases go to PyPI (§7, #25).
+- **Public repository** in the getwyrd organisation; releases go to PyPI (§7, #24).
 - **Callers live in other projects.** A change to the facts or the API reaches a caller only
   when it moves its exact pin. Until the API is marked stable (SECURITY.md), a change may
   break callers, so each release says what changed for them.

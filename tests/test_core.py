@@ -240,6 +240,7 @@ MODE_UNTRUSTED = [
     "$'shopt' -s extglob",
     "set + -k; command printf '<%s>\\n' a=b c",
     "set + + -o posix",
+    ": {POSIXLY_CORRECT}>/dev/null\ntime -p type echo",
 ]
 MODE_TRUSTED = [
     "set -euo pipefail; ls",
@@ -281,7 +282,7 @@ UNSEEN_CODE = [
     "while :; do echo a=b; eval x; done",
     "f() { eval \"$1\"; }; f x; echo a=b",
     "$(echo set) -k\necho a=b c",
-    "enable -f ./mode.so mode\nmode\nprintf '<%s>\\n' a=b c",
+    "enable -f ./mode.so mode\nmode\nprintf '<%s>\\n' a=b c",    "jobs -x set -k; printf '<%s>\\n' a=b c",
 ]
 
 

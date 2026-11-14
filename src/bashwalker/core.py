@@ -1425,6 +1425,12 @@ def walk(source: str, limits: Limits = DEFAULT_LIMITS) -> Walk:
     if (
         any(a.name in MODE_VARIABLES for a in layer.assignments)
         or any(_NAMES_MODE_VARIABLE.match(w.text) for w in layer.words)
+        # `{POSIXLY_CORRECT}>/dev/null` assigns the descriptor number to the name.
+        or any(
+            r.descriptor is not None
+            and _NAMES_MODE_VARIABLE.match(r.descriptor.strip("{}"))
+            for r in layer.redirects
+        )
         or any(_changes_line_reading(i) for i in layer.invocations)
     ):
         # History expansion, POSIX mode, `keyword` and `interactive_comments` change how
@@ -1582,7 +1588,8 @@ BUILTIN_PREFIXES = ("command", "builtin")
 # Builtins that take shell code in an option, by the option letters that do.
 # `enable -f` loads a shared object into the shell: native code the walker does not see.
 CODE_OPTIONS = {
-    "mapfile": "C", "readarray": "C", "complete": "CF", "compgen": "CF", "bind": "x", "enable": "f"
+    "mapfile": "C", "readarray": "C", "complete": "CF", "compgen": "CF", "bind": "x", "enable": "f",
+    "jobs": "x",  # `jobs -x cmd` runs cmd in the current shell
 }
 
 

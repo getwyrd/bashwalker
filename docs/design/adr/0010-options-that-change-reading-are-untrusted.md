@@ -31,10 +31,11 @@ The tree is untrusted when the line:
   of options known not to change reading, checked by direction (`set +H` is trusted,
   `set -H` is not), or with an option word the walker can't read;
 - writes `POSIXLY_CORRECT`, `BASH_COMPAT`, `SHELLOPTS`, `BASHOPTS` or `histchars` in any
-  way (assignment, loop variable, `${VAR:=…}`, or naming it to a builtin), with the same
+  way (assignment, loop variable, `${VAR:=…}`, a named descriptor `{VAR}>f`, or naming it to
+  a builtin), with the same
   checks as for the variables bash runs as code, which now also cover `${PS4:=…}`;
 - runs code the walker does not see (`eval`, `source`, `.`, `fc`, `trap`, `alias`, a code
-  option such as `mapfile -C` or `enable -f`, or an unreadable command word) when another command may run
+  option such as `mapfile -C`, `enable -f` or `jobs -x`, or an unreadable command word) when another command may run
   after it: one written after it, or the same command run again by a loop or function.
 
 We trust options from a list, not reject them from a list. An option nobody has looked at

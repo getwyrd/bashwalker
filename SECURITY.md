@@ -1,7 +1,8 @@
 # Security policy
 
 bashwalker is early software (0.1.x). Its API isn't stable yet, but its one security
-promise holds from the start: a fact `walk()` reports as proven holds for bash. Its callers
+promise holds from the start: a fact `walk()` reports as proven holds for bash, in the
+supported versions (today 5.1–5.3; see architecture §1.5). Its callers
 decide whether a command runs based on those facts; nl-shell and pdca-harness are the first,
 with their integrations in progress. We want to hear about anything that breaks the
 promise, including flaws in the design itself.
@@ -46,8 +47,8 @@ are not in themselves security issues.
 
 **In scope:**
 
-- A command line where `walk()` reports a fact as proven that bash doesn't agree with, and
-  the tree isn't untrusted. Examples are a simple command missing from the invocations, a
+- A command line where `walk()` reports a fact as proven that a supported bash version
+  (5.1–5.3) doesn't agree with, and the tree isn't untrusted. Examples are a simple command missing from the invocations, a
   word marked literal that bash expands, or a stdin reported as `terminal`, `pipe` or
   `literal` that is something else. Hidden commands, including commands reached through
   arithmetic, are the most serious case.
@@ -60,6 +61,8 @@ are not in themselves security issues.
 
 **Out of scope:** the documented residuals in
 [§14.8](docs/design/architecture/14-threat-model.md#148-residual-and-accepted-risks):
+- a disagreement with a bash version outside the supported ones (for example 3.2 or a newer
+  release not yet added): open a normal issue;
 - what `eval`, `source`, a script or a non-literal command word runs later;
 - run-time shell state;
 - memory-safety bugs inside tree-sitter itself (report those upstream).

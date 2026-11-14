@@ -27,6 +27,7 @@ or runs over its budget is refused (Rule 5, §8.4).
 | Different callers need different rules | Report facts only; policy belongs to the caller | ADR-0007 |
 | Facts that can't be proven | Report them as the worst case, never a guess | ADR-0008 |
 | Run-time values reaching arithmetic | Trust arithmetic only when it is literal numbers | ADR-0009 |
+| A line that changes how bash reads its later commands | Trust only listed `set`/`shopt` options; unseen code that runs before another command is untrusted | ADR-0010 |
 | The grammar disagrees with bash on some forms | Rule 1 marks those forms untrusted; the differential test hunts for new ones | ADR-0006, §8.1, §8.5 |
 | A node the walk silently skips | Rule 2: a handler for every node kind, checked against the tree on every walk | ADR-0008, §8.2 |
 | Hostile input as denial of service | Rule 5: size cap before parsing, work and depth budgets | §8.4 |
@@ -41,6 +42,7 @@ scratch:
 
 1. Take the gate's shell layer out as its own package, keeping only facts (ADR-0007).
 2. Harden it through review and the differential test.
-3. Release v0.1.0, then v0.1.1 with the arithmetic rule (ADR-0009).
+3. Release v0.1.0, then v0.1.1 with the arithmetic rule (ADR-0009) and v0.1.2 with the
+   line-reading options rule (ADR-0010).
 
 Next come PyPI publishing (§7) and bash version support (proposal 0001). §9 has the order.

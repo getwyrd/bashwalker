@@ -27,8 +27,12 @@ is enough to make the whole tree untrusted. The reasons come from two places:
   backslash-newline, unusual here-docs, backtick forms the grammar merges, words read across
   whitespace, and the other parser-level forms in §14.5.
 - `walk()` adds the reasons that need the whole walk: arithmetic (below), a variable bash
-  runs as code (`PS4`, `PROMPT_COMMAND`, …), assigned text holding a substitution, words
-  after a redirect with no command to take them, and the forms the walker meets while
+  runs as code (`PS4`, `PROMPT_COMMAND`, …), an option that changes how bash reads the
+  line (`set -H`, `set -o posix`, `set -k`, `shopt -u interactive_comments`, a write to
+  `POSIXLY_CORRECT`; only listed options are trusted) or code the walker does not see
+  running before another command (`eval`, `source`, a trap, an unreadable command word)
+  (ADR-0010), assigned text holding a substitution, words after a redirect with no command
+  to take them, and the forms the walker meets while
   visiting (a declaration or `unset` operand with a subscript).
 
 So `untrusted_features()` alone is not a full trust verdict (§3.2).

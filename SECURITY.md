@@ -11,7 +11,8 @@ with their integrations in progress. We want to hear about anything that breaks 
 promise, including flaws in the design itself.
 
 Versions before 0.1.1 can report a line as trusted while bash runs a command hidden in
-arithmetic. Use 0.1.1 or later.
+arithmetic. Versions before 0.1.2 can report trusted facts for a line that changes how bash
+reads its later commands (GHSA-hc72-48v8-pvg7). Use 0.1.2 or later.
 
 The threat model (assets, trust boundaries, adversaries and the attacks the project must
 withstand) is maintained with the design documentation: see

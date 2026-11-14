@@ -46,6 +46,10 @@ PR number from the payload and posts a fixed comment. A change that adds an
   (`Walk.untrusted`, a non-literal word, `unknown` stdin) or raises `ParseRefused`.
 - **Grammar disagreements are flagged.** A line that tree-sitter-bash reads differently
   from bash gives a non-empty `Walk.untrusted`, never a clean tree.
+- **Options that change reading are flagged.** A line that sets history expansion, POSIX
+  mode, `keyword` or turns off `interactive_comments` (by `set`, `shopt` or a mode variable
+  such as `POSIXLY_CORRECT`), or runs unseen code (`eval`, `source`, a trap) before another
+  command, gives a non-empty `Walk.untrusted` (ADR-0010).
 - **Bounded work.** Input over the size cap is refused before it is parsed; the walk has a
   node budget and a depth limit.
 

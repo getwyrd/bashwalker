@@ -51,7 +51,9 @@ are not in themselves security issues.
   `literal` that is something else. Hidden commands, including commands reached through
   arithmetic, are the most serious case.
 - A crash, a hang, or time or memory far beyond `Limits` on some input.
-- A `ParseRefused` message or any other output that carries the input.
+- A `ParseRefused` message, or other error or diagnostic output, that carries the input.
+  The facts themselves (word text, assignment values, redirect targets) carry the input on
+  purpose.
 - A workflow or CI weakness that lets a fork's pull request write to the repository or
   read secrets.
 

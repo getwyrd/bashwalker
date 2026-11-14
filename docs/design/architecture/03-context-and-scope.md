@@ -38,7 +38,8 @@ graph LR
 | `walk(line, limits)` | caller → bashwalker | The line is untrusted: every byte may come from an adversary (§14.2). The limits are the caller's. |
 | `Walk`, `Invocation` and the other fact types | bashwalker → caller | A proven fact holds for bash. A worst-case fact (untrusted tree, non-literal word, `unknown` stdin) must be treated as the worst case for the caller's rules. |
 | `ParseRefused` | bashwalker → caller | Fixed text that never quotes the input. The caller treats it as "cannot judge". |
-| `command_head`, `may_rewire_stdin`, `lex_word`, `untrusted_features`, `parse_source` | bashwalker → caller | Helpers over the same facts, with the same guarantees. |
+| `command_head`, `may_rewire_stdin` | bashwalker → caller | Read the facts of a `Walk`'s invocations, with the same guarantees. |
+| `lex_word`, `make_word`, `untrusted_features`, `parse_source` | bashwalker → caller | Low-level parts of the walk with narrower contracts. `parse_source` applies no `Limits` and no trust rules; `untrusted_features` lacks the checks that need the whole walk (arithmetic, variables bash runs as code). Only `walk()` gives the full guarantee. |
 | tree-sitter and tree-sitter-bash | bashwalker → library | Trusted at the exact pin. A grammar release is reviewed before the pin moves (§14.3). |
 | bash, shfmt, bubblewrap | test → tools | Oracles in the differential test only, never at run time. |
 

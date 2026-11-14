@@ -31,7 +31,7 @@ its own rules.
 
 ## Consequences
 
-- Soundness wins over precision (architecture §1.3). Safe lines sometimes come back untrusted,
+- Soundness wins over precision (architecture §1.6). Safe lines sometimes come back untrusted,
   which costs a caller a confirmation or a block. That is a precision bug, not a security bug
   (SECURITY.md).
 - Making a form proven is a deliberate change with a test. It can't happen as a side effect.

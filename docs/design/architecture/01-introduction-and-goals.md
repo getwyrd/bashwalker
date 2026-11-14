@@ -23,7 +23,16 @@ functions and here-doc command lines. Each invocation reports:
 The walk also lists the features that make the parse untrusted. The caller decides what the
 command may do; bashwalker makes no policy decision (ADR-0007).
 
-## 1.2 Why it is needed
+## 1.2 The headline promise
+
+**A fact reported as proven holds for bash.** If `walk()` says a word is literal, that a
+line has these simple commands, or that stdin comes from a here-string, bash agrees. When a
+fact can't be proven, it comes back as the worst case: a non-literal word, `unknown` stdin
+or an untrusted tree. A walk that can't be completed raises `ParseRefused` (ADR-0008). The
+threat model (§14) treats a wrong fact that looks proven as the main threat, because a
+caller's policy would let through a command it would have blocked.
+
+## 1.3 Why it is needed
 
 More and more bash command lines are written by programs: a language model proposing a
 command, an agent calling a shell tool, a script assembling a line. Whatever runs them has
@@ -41,7 +50,7 @@ bashwalker answers the question a caller can build a decision on: what does bash
 line? It does this only where the answer can be proven, and it reports everything else as
 the worst case.
 
-## 1.3 What tree-sitter-bash does and doesn't do
+## 1.4 What tree-sitter-bash does and doesn't do
 
 bashwalker parses with tree-sitter-bash, pinned exactly (ADR-0006).
 
@@ -64,11 +73,11 @@ bashwalker parses with tree-sitter-bash, pinned exactly (ADR-0006).
 - **It doesn't give simple commands as bash runs them.** bashwalker builds one invocation per
   simple command, with its words, redirects and stdin, and checks that no node was skipped
   (Rule 2, §8.2).
-- **It doesn't know bash versions.** One grammar covers every release (§1.4).
+- **It doesn't know bash versions.** One grammar covers every release (§1.5).
 - **It knows nothing at run time:** variables, functions, aliases, the cwd. Neither does
   bashwalker (§1.7).
 
-## 1.4 Bash versions
+## 1.5 Bash versions
 
 A line can mean different things in different bash releases. In bash 5.3, `${ cmd; }` runs
 `cmd`; in 5.1 and 5.2 it is a syntax error. From 5.2, `&` in `${var/pat/rep}` stands for the
@@ -78,15 +87,6 @@ covers. A form that differs between them is handled as its worst case.
 
 **[OPEN]** Draft proposal 0001 (#27) designs support for several versions, older and newer:
 a caller states the versions a line may run on, and each fact must hold for all of them.
-
-## 1.5 The headline promise
-
-**A fact reported as proven holds for bash.** If `walk()` says a word is literal, that a
-line has these simple commands, or that stdin comes from a here-string, bash agrees. When a
-fact can't be proven, it comes back as the worst case: a non-literal word, `unknown` stdin
-or an untrusted tree. A walk that can't be completed raises `ParseRefused` (ADR-0008). The
-threat model (§14) treats a wrong fact that looks proven as the main threat, because a
-caller's policy would let through a command it would have blocked.
 
 ## 1.6 Quality goals
 

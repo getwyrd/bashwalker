@@ -11,15 +11,16 @@ tags:
 
 ## 7.1 What the user gets
 
-bashwalker is deployed as a package on PyPI, which callers install and pin exactly:
+bashwalker is to be deployed as a package on PyPI, which callers install and pin exactly
+(`pip install bashwalker==X.Y.Z`). The publishing workflow doesn't exist yet (#25). The plan
+is that each release tag builds an sdist and a pure-Python wheel and publishes them with
+PyPI's trusted publishing (OIDC, no stored token).
+
+Today callers install from the git tag and pin it:
 
 ```
-pip install bashwalker==X.Y.Z
+bashwalker @ git+https://github.com/getwyrd/bashwalker@v0.1.1
 ```
-
-Each release tag builds an sdist and a pure-Python wheel and publishes them with PyPI's
-trusted publishing (OIDC, no stored token). Until the first PyPI release (#25), callers
-install from the git tag (`bashwalker @ git+https://github.com/getwyrd/bashwalker@v0.1.1`).
 
 The package runs wherever its two dependencies have wheels: tree-sitter 0.26.0 (a native
 extension) and tree-sitter-bash 0.25.1 (the compiled grammar). It runs inside the caller's

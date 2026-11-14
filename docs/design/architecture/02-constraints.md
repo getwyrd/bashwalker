@@ -19,7 +19,7 @@ tags:
   pin bashwalker exactly for the same reason.
 - **bash versions.** The facts describe what bash 5.1 to 5.3 does with the line, and the
   differential test compares against those three releases (§8.5). Other versions behave
-  differently (§1.4); supporting them is draft proposal 0001.
+  differently (§1.5); supporting them is draft proposal 0001.
 - **In-process and synchronous.** `walk()` runs inside the caller on every command line it
   checks, so it must be fast and must not start processes, read files or use the network.
 

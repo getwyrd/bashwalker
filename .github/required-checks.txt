@@ -1,8 +1,13 @@
-# The status checks the default branch requires, one per line. Each is a job name in
-# .github/workflows/. scripts/repo-settings.py reads this file from the default branch,
+# The status checks the default branch requires, one per line. Each is a check-run name
+# from .github/workflows/: a job's `name`, or its id when it has none; a matrix job gives
+# one check per entry. scripts/repo-settings.py reads this file from the default branch,
 # so a change here takes effect when it merges and `repo-settings.py apply` runs.
 dco
 docs-check
 docs-immutability
 gate
 require-linked-issue
+python-3-11
+differential (bash 5.1)
+differential (bash 5.2)
+differential (bash 5.3)

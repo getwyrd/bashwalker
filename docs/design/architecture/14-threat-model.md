@@ -112,11 +112,11 @@ inputs that hold control characters in refused lines (`test_refusals_never_quote
 | Grammar disagreement hides a form | Rule 1 | `test_rule1_names_each_feature`, `test_rule1_quoted_text_is_trusted`, `test_rule1_untrusted_tree_proves_no_stdin` |
 | A command the walk never reports | Rule 2 | `test_rule2_one_invocation_per_simple_command`, `test_rule2_every_kind_has_a_handler`, `test_rule2_removed_handler_is_refused`, `test_rule2_skipped_children_are_refused`, `test_walk_reaches_every_simple_command` |
 | A non-literal word reported literal | Rule 3 | `test_rule3_literal_flag`, `test_declaration_operands` |
-| A wrong stdin fact | Rule 3 | `test_rule3_stdin_sources`, `test_rule3_file_stdin_names_its_redirect`, `test_unreadable_targets_are_marked`, `test_command_head_and_stdin_rewiring` |
+| A wrong stdin fact | Rule 3 | `test_rule3_stdin_sources`, `test_rule3_path_stdin_keeps_its_redirect`, `test_unreadable_targets_are_marked`, `test_command_head_and_stdin_rewiring` |
 | A word lost to a descriptor | descriptor syntax | `test_words_next_to_redirects_are_kept` |
 | A word lost under a redirect | operands after the target | `test_words_after_a_redirect_target_stay_operands` |
 | A prefixed declaration | prefix look-through | `test_declarations_behind_command_and_builtin` |
-| Arithmetic on a run-time value | unproven arithmetic reads | `test_arithmetic_on_unproven_values_is_untrusted`, `test_arithmetic_on_proven_numbers_is_trusted` |
+| Arithmetic on a run-time value | unproven arithmetic reads | `test_arithmetic_on_unproven_values_is_untrusted`, `test_arithmetic_on_literal_numbers_is_trusted` |
 | Command splits and literal words that bash, shfmt or bash's reprint read differently | differential test | `test_generated_lines_agree_with_the_oracles`, `test_escape_is_detected` (with `BASHWALKER_DIFFERENTIAL=1`) |
 | Wrong redirect facts | redirect facts | `test_redirect_facts` |
 | Slow or deep input | Rule 5 | `test_rule5_inputs_at_the_cap_are_walked`, `test_rule5_over_cap_is_never_parsed`, `test_rule5_work_and_depth_budgets`, `test_rule5_limits_are_the_callers` |

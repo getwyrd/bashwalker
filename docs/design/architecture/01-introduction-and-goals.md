@@ -14,7 +14,8 @@ tags:
 bashwalker is a Python library. It takes one bash command line and returns facts about each
 simple command in it, without running anything. `walk(line)` parses the line and returns a
 `Walk`: one `Invocation` per simple command, including those inside substitutions,
-functions and here-doc command lines. Each invocation reports:
+functions and here-doc command lines. One known gap: a `[ … ]` test gives no invocation yet
+(#30). Each invocation reports:
 
 - its words, each marked literal or not;
 - its assignments and redirects;

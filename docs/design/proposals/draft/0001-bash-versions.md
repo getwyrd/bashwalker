@@ -2,7 +2,7 @@
 created: 14.11.2026 12:00
 type: proposal
 status: draft
-author: Eduard R.
+author: Eduard Ralph
 tracking-issue: 27
 supersedes:
 tags:

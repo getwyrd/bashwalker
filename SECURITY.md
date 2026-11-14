@@ -2,7 +2,9 @@
 
 bashwalker is early software (0.1.x). Its API isn't stable yet, but its one security
 promise holds from 0.1.1 on: a fact `walk()` reports as proven holds for bash, in the
-supported versions (today 5.1–5.3; see architecture §1.5). The known exceptions are listed
+supported versions (today 5.1–5.3 at the patch levels CI tests: 5.1.16, 5.2.37 and 5.3.20;
+see architecture §1.5). Other patch levels of those releases are expected to agree but are
+not tested. The known exceptions are listed
 in [§14.9](docs/design/architecture/14-threat-model.md#149-gaps-and-their-disposition),
 each with an open issue (today wrong stdin and prefix facts for `PATH=… $(true)` (#28) and `coproc`
 (#26), and no invocation for a `[ … ]` test (#30)). Its callers

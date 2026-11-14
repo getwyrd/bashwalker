@@ -83,7 +83,8 @@ bashwalker parses with tree-sitter-bash, pinned exactly (ADR-0006).
 A line can mean different things in different bash releases. In bash 5.3, `${ cmd; }` runs
 `cmd`; in 5.1 and 5.2 it is a syntax error. From 5.2, `&` in `${var/pat/rep}` stands for the
 matched text; before, it was literal. Today the facts describe bash 5.1–5.3, which the
-differential test covers. A form that differs between them is handled as its worst case.
+differential test covers at the patch levels `scripts/build_bash.py` builds (5.1.16, 5.2.37,
+5.3.20); other patch levels of those releases are expected to agree but are not tested. A form that differs between them is handled as its worst case.
 
 The oldest supported release is 5.1. Bash 5.0 is planned (#29). Releases older than 5.0, such
 as the 3.2 that macOS ships as `/bin/bash`, will not be supported: a caller running them gets

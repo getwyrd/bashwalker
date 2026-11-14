@@ -11,12 +11,6 @@ tags:
 
 > **Status: ADOPTED.** bashwalker adopts the [Contributor Covenant 3.0](https://www.contributor-covenant.org/version/3/0/) (below). The **project principles** below adapt [The Apache Way](https://apache.org/theapacheway/). In bashwalker, the Covenant's "Community Moderators" are the **maintainers and the architecture board**; violations are reported to **policy@getwyrd.dev**; and removing an Associate, Maintainer, or board member as enforcement follows the *Removal for cause* process in [GOVERNANCE.md](GOVERNANCE.md). Contributor Covenant 3.0 is licensed CC BY-SA 4.0; this adaptation is shared under the same licence.
 
-> **How to fill this in:** the Contributor Covenant text is standard; leave it as is. Check
-> the project principles at the top and the reporting address (policy@getwyrd.dev), which must
-> be a mailbox someone reads. Reference: wyrd's
-> [CODE_OF_CONDUCT.md](https://github.com/getwyrd/wyrd/blob/main/docs/governance/CODE_OF_CONDUCT.md).
-> Delete this block once you have reviewed it.
-
 ## Project principles
 
 bashwalker's project principles adapt **[The Apache Way](https://apache.org/theapacheway/)** — the operating philosophy of the Apache Software Foundation:

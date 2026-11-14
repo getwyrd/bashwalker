@@ -1,5 +1,5 @@
 {
-  "_comment": "Labels for issue priority triage (ADR-0005). The apply job creates any that are missing; it never edits or deletes an existing label. Severity, reach, priority and needs-triage are the same in every project. The area labels are this project's own: replace the examples with the project's parts (one per top-level component or source folder is a good start), keep each description under 100 characters, and list the same areas in prompt.md. Owners map an area to the GitHub login assigned when an issue has no assignee; \"*\" is the fallback.",
+  "_comment": "Labels for issue priority triage (ADR-0005). The apply job creates any that are missing; it never edits or deletes an existing label. Severity, reach, priority and needs-triage are the same in every project. The area labels are this project's own (ADR-0005 section 1); keep each description under 100 characters and list the same areas in prompt.md. Owners map an area to the GitHub login assigned when an issue has no assignee; \"*\" is the fallback.",
   "severity": {
     "sev:critical": {"color": "5c0000", "description": "Data loss or corruption, a security or safety property broken, or a secret leaks"},
     "sev:major": {"color": "8b2c2c", "description": "A safety check bypassed or silently off, a crash, or a core feature broken with no workaround"},
@@ -12,7 +12,7 @@
     "reach:adversarial": {"color": "312e81", "description": "Only triggers when someone sets it up on purpose"}
   },
   "area": {
-    "area:core": {"color": "0e8a16", "description": "EXAMPLE, replace: the main component"},
+    "area:walker": {"color": "0e8a16", "description": "src/bashwalker: the walk, the trust rules, the facts and their API"},
     "area:ci": {"color": "0e8a16", "description": "Workflows, build and release tooling"},
     "area:docs": {"color": "0e8a16", "description": "ADRs, specs, the threat model and other docs"},
     "area:tests": {"color": "0e8a16", "description": "Test suite only"}

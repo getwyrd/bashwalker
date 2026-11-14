@@ -9,18 +9,6 @@ tags:
 ---
 # 0005. Issue priority: severity and reach set P0–P3, applied by hand or by a bot
 
-> **How to fill this in:** sections 2–4 are the shared scheme used by wyrd, nl-shell,
-> pdca-harness, stemma and autobook; keep them unless the project has a reason to differ.
-> Make section 1 concrete: say what *critical* and *major* mean for this project, and list
-> its `area:*` labels. Keep `.github/triage/labels.json` and `.github/triage/prompt.md` in
-> step with it. Add any project-specific override to section 3 (nl-shell raises every
-> security bug to at least P1, because a shell that runs commands treats an attacker-only
-> bypass as its main threat). Then delete this block and set `status: Accepted` in one PR.
-> Examples: nl-shell's
-> [ADR-0026](https://github.com/getwyrd/nl-shell/blob/main/docs/design/adr/0026-issue-priority-scheme.md)
-> and wyrd's
-> [ADR-0048](https://github.com/getwyrd/wyrd/blob/main/docs/design/adr/0048-issue-priority-and-automated-triage.md).
-
 ## Context
 
 Issues reach the repository from users, contributors, automated loops and deferred review
@@ -54,8 +42,23 @@ section 4 adds what an automated triager may and may not do.
 | `reach:edge` | Needs an unusual setup, input or timing |
 | `reach:adversarial` | Only triggers when someone sets it up on purpose |
 
+For bashwalker, *a security or safety property broken* means a fact that `walk()` reports
+as proven while bash disagrees, on a tree it reports as trusted. Examples are a hidden
+command, a word marked literal that bash expands, or a wrong stdin. Callers allow commands
+on those facts (threat model §14.1), so this is `sev:critical`. *A core feature broken*
+means `walk()` crashes, hangs or refuses ordinary command lines. A safe line wrongly
+reported as untrusted is `sev:minor`: callers fail closed, at the cost of a confirmation or
+a block.
+
 **Area: where the issue lives** (for routing and assignment): the `area:*` labels in
-`.github/triage/labels.json`, following the project's components.
+`.github/triage/labels.json`:
+
+| Label | Covers |
+|---|---|
+| `area:walker` | `src/bashwalker/`: the walk, the trust rules, the facts and their API |
+| `area:ci` | Workflows, build and release tooling, `scripts/` |
+| `area:docs` | ADRs, specs, the threat model and other docs |
+| `area:tests` | The test suite only, including the differential test, when the walker is right |
 
 ### 2. Priority from severity and reach
 
@@ -76,6 +79,9 @@ The labels are `priority:P0` to `priority:P3`. Severity and reach set a priority
 
 ### 3. Overrides
 
+- **Security or safety bugs get at least P1, even when `reach:adversarial`.** bashwalker's
+  main threat is an adversary who writes the command line (threat model §14.3), so an
+  attacker-only misread is the case that matters most, as in nl-shell.
 - **`release-gating` means at least P1**, whatever the table says.
 - **`accessibility` barriers get at least P2.**
 - **Deferred review findings** keep the review's priority, unless the triager can show the

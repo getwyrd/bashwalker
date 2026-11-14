@@ -1,11 +1,15 @@
 %% C4 level 1: the system and who or what it talks to (architecture §3).
-%% Replace the placeholder people and systems with the real ones.
 C4Context
   title System context for bashwalker
 
-  Person(user, "User", "Who uses the system and why")
-  System(system, "bashwalker", "A bash command line in, proven facts per simple command out: a fail-closed tree-sitter-bash walker (extracted from nl-shell)")
-  System_Ext(external, "External system", "Something the system depends on or serves")
+  Person(author, "Line author", "A language model, an agent or a person who writes a bash command line")
+  System_Ext(caller, "Caller", "nl-shell's policy gate or pdca-harness's STOP guard: decides whether a line may run")
+  System(system, "bashwalker", "A bash command line in, proven facts per simple command out: a fail-closed tree-sitter-bash walker")
+  System_Ext(grammar, "tree-sitter + tree-sitter-bash", "Parser runtime and bash grammar, pinned exactly")
+  System_Ext(bash, "bash", "Runs the lines the caller allows")
 
-  Rel(user, system, "Uses")
-  Rel(system, external, "Calls / reads / writes")
+  Rel(author, caller, "Proposes a command line")
+  Rel(caller, system, "walk(line)")
+  Rel(system, grammar, "Parses the line")
+  Rel(system, caller, "Facts, or ParseRefused")
+  Rel(caller, bash, "Runs allowed lines")

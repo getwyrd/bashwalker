@@ -11,15 +11,6 @@ tags:
 
 > **Status: RATIFIED.** This records the project's decision-making structure — roles, the architecture board, and the decision and amendment processes. Ratified by the founding maintainer (the sole maintainer during bootstrap) per the amendment rule below; further changes follow that process.
 
-> **How to fill this in:** this is wyrd's governance with the project name, founding
-> maintainer and contact filled in by `init-repo.sh`. Read it once and adjust what doesn't
-> fit: the role ladder, the thresholds (two maintainers for an Associate, two-thirds for a
-> Maintainer), the inactivity periods, and whether an architecture board is needed at all;
-> a single-maintainer project can keep the bootstrap rules indefinitely. Changes follow
-> *Amending this document* below. Reference: wyrd's
-> [GOVERNANCE.md](https://github.com/getwyrd/wyrd/blob/main/docs/governance/GOVERNANCE.md).
-> Delete this block once you have reviewed it.
-
 ## Purpose
 
 bashwalker is an open-source project built initially by a small team and dependent on outside contributors (see [ADR-0001](../design/adr/0001-record-architecture-decisions.md)). This document makes explicit *who holds which responsibilities* and *how decisions are made*, so that authority is stated rather than assumed.

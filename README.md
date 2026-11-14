@@ -42,7 +42,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) and, for coding agents, [AGENTS.md](AGENT
 
 ## License
 
-Copyright © 2026 Eduard R..
+Copyright © 2026 Eduard R.
 
 bashwalker is licensed under the **Apache License, Version 2.0** ([LICENSE](LICENSE)).
 

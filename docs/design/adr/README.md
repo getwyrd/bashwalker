@@ -60,21 +60,22 @@ frontmatter, and both sides of every supersession agree. Run
 
 ## ADR candidates
 
-<!-- How to fill this in: list decisions that are already settled somewhere else (a
-     proposal, the architecture overview, a code comment) and would need an ADR the first
-     time someone contests them, or that would change what an accepted ADR or an AGENTS.md
-     MUST rule says. Extract one into an ADR when it is first cited to settle an argument;
-     earlier is filing for its own sake. Delete a row when its ADR is written. Example:
-     autobook's "Decisions not yet recorded"
-     (https://github.com/Ralphovi/autobook/blob/main/docs/design/adr/README.md). -->
-
 | Candidate | Where it is decided now | Why it will need an ADR |
 |-----------|-------------------------|-------------------------|
+| Parse with tree-sitter-bash, pinned exactly | Extraction (#3), `pyproject.toml`, architecture §2.1 and §4.2 | Every fact depends on it; a pin move or a parser change is the largest change the project can make |
+| Facts only, no policy | Module docstring, architecture §1.5 and §8.6 | Callers will ask for allow/deny helpers; adding one changes what the project promises |
+| Unproven means worst case, never a guess | Module docstring, architecture §8, threat model §14.2 | It is the rule every proven form is judged by |
+| Arithmetic is trusted only when it is literal numbers | #12, architecture §8.1, threat model §14.5 | It trades precision for soundness; a request to prove some names numeric again will contest it |
 
 ## Why not ...?
 
-<!-- How to fill this in: name the alternatives people keep proposing ("why not X?") and
-     point at where the answer is written down: an ADR, the architecture overview's
-     section 11, or a proposal. When the answers outgrow a few lines, write a comparison
-     ADR. Example: wyrd's index
-     (https://github.com/getwyrd/wyrd/blob/main/docs/design/adr/README.md). -->
+- **Why not ask bash itself?** bashwalker runs in the caller's process on every line, with
+  no subprocess (architecture §2.1). `bash -n` checks syntax but gives no tree. bash is the
+  oracle in the differential test instead (§8.5).
+- **Why not return allowed or blocked?** Callers need different rules from the same facts
+  (§8.6).
+- **Why not prove a variable numeric from an earlier assignment?** That was v0.1.0's
+  approach, and review kept finding ways around it (#10, #12). §8.1 has the rule that
+  replaced it.
+- **Why not a version range for tree-sitter-bash?** A grammar release changes the facts;
+  only a reviewed pin change may do that (§2.1).

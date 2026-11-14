@@ -1,13 +1,12 @@
 # Security policy
 
-<!-- How to fill this in: say how mature the project is and what it promises (wyrd's first
-     paragraph says it is pre-release and carries no security promise yet), name the tools
-     that run today (Dependabot, secret scanning, any fuzzing or static analysis), and
-     narrow the Scope section to what is and isn't a vulnerability for this project.
-     Example: https://github.com/getwyrd/wyrd/blob/main/SECURITY.md -->
+bashwalker is early software (0.1.x). Its API isn't stable yet, but its one security
+promise holds from the start: a fact `walk()` reports as proven holds for bash. Callers
+such as nl-shell and pdca-harness decide whether a command runs based on those facts. We
+want to hear about anything that breaks the promise, including flaws in the design itself.
 
-bashwalker is early software. We still want to hear about vulnerabilities early,
-including in the design itself.
+Versions before 0.1.1 can report a line as trusted while bash runs a command hidden in
+arithmetic. Use 0.1.1 or later.
 
 The threat model (assets, trust boundaries, adversaries and the attacks the project must
 withstand) is maintained with the design documentation: see
@@ -16,7 +15,9 @@ withstand) is maintained with the design documentation: see
 The project relies on **coordinated disclosure** and free, continuous tooling: Dependabot
 security updates, GitHub secret scanning and CodeQL code scanning run on every push, and
 [OpenSSF Scorecard](https://scorecard.dev) rates the repository's practices weekly. GitHub
-Actions are pinned to commit hashes. Reporters are credited, and
+Actions are pinned to commit hashes. The walker is also checked against bash 5.1–5.3 itself:
+the differential test compares it with `bash -n`, shfmt and bash's own reprint on
+generated command lines in every pull request. Reporters are credited, and
 we will work with you on a disclosure timeline.
 
 **Safe harbor.** We will not pursue or support legal action against researchers acting in
@@ -41,3 +42,24 @@ We will acknowledge your report and keep you informed as we investigate.
 
 Until a format or interface is marked stable, behavioural changes to it are expected and
 are not in themselves security issues.
+
+**In scope:**
+
+- A command line where `walk()` reports a fact as proven that bash doesn't agree with, and
+  the tree isn't untrusted. Examples are a simple command missing from the invocations, a
+  word marked literal that bash expands, or a stdin reported as `terminal`, `pipe` or
+  `literal` that is something else. Hidden commands, including commands reached through
+  arithmetic, are the most serious case.
+- A crash, a hang, or time or memory far beyond `Limits` on some input.
+- A `ParseRefused` message or any other output that carries the input.
+- A workflow or CI weakness that lets a fork's pull request write to the repository or
+  read secrets.
+
+**Out of scope:** the documented residuals in
+[§14.8](docs/design/architecture/14-threat-model.md#148-residual-and-accepted-risks):
+- what `eval`, `source`, a script or a non-literal command word runs later;
+- run-time shell state;
+- memory-safety bugs inside tree-sitter itself (report those upstream).
+
+A safe line reported as untrusted is a precision bug, not a vulnerability: please open a
+normal issue.

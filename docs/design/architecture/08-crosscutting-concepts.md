@@ -9,17 +9,108 @@ tags:
 
 > Living document. The core ideas the rest of the design is built on. Terms are also in the glossary (section 12). Open questions are marked **[OPEN]** inline.
 
-> **How to fill this in:** Concepts that apply across components: consistency, error
-> handling, security and trust, observability, compatibility and version skew, build and CI.
-> One subsection per concept that actually exists; don't add empty ones. Replace each italic
-> prompt with prose and delete this block once the section describes the real system.
-> Example:
-> [wyrd](https://github.com/getwyrd/wyrd/blob/main/docs/design/architecture/08-crosscutting-concepts.md).
+One principle runs through all of them: **nothing is proven until it is proven.** Each fact
+starts as the worst case and becomes proven only through a short list of forms that tests
+cover. A form that isn't on a list stays the worst case. That keeps the walker sound
+(goal 1) at the cost of some precision (goal 3). The rules are numbered as in nl-shell's
+`policy-gate/v1` specification, where the walker comes from. Rule 4 there decides which
+redirects are safe; that is policy, so it stayed in nl-shell, and bashwalker only records
+the redirect facts it needs.
 
-## 8.1 <first core concept>
+## 8.1 Rule 1: trusting the tree
 
-_One subsection per concept a newcomer must understand before the rest makes sense. Say what it is, why it exists, and which ADR decided it._
+tree-sitter-bash is a grammar for editors, not a reimplementation of bash, and it reads some
+forms differently. `untrusted_features()` lists them:
 
-## 8.N Security
+- `ERROR` and `MISSING` nodes;
+- extglob and backslash-newline;
+- unusual here-docs;
+- backtick forms the grammar merges;
+- words read across whitespace;
+- and the rest of §14.5.
 
-_Point to .oss-scanner/threat_model.md and say when a change must update it._
+Each feature found adds a reason to `Walk.untrusted`. One reason is enough to make the whole
+tree untrusted.
+
+Arithmetic is part of Rule 1. Bash evaluates a variable's run-time value as an arithmetic
+expression in many places, and a subscript in that value runs its command substitutions, so
+`$((X))` with `X='a[$(id)]'` runs `id`. Since #12, arithmetic is trusted only when it is
+literal numbers. Any of these makes the tree untrusted:
+- a name, `$` or backtick in an arithmetic context or an array index;
+- a `-i` declaration or a write to one of bash's integer variables;
+- a value bash may reparse as a compound assignment;
+- an indirect `${!name}`, or a `coproc`.
+
+## 8.2 Rule 2: no node skipped
+
+The `Walker` has one handler for every named node kind in the pinned grammar (`HANDLERS`).
+After each walk, `_check_walk()` confirms two things:
+- every named node was visited exactly once;
+- every `command`, `declaration_command` and `unset_command` produced exactly one
+  `Invocation`.
+
+A miss raises `ParseRefused`. A grammar update that adds a node kind therefore fails loudly
+instead of hiding a command. Tests remove each handler in turn and check that the walk
+refuses.
+
+## 8.3 Rule 3: literal words and proven stdin
+
+`lex_word()` removes quotes as bash does. It marks a word literal only when bash would expand
+nothing in it: no `$`, backtick, glob, brace, tilde, `$'…'` or `$"…"`. The decoded text is
+what bash would see.
+
+Stdin is one of four kinds:
+- `terminal`;
+- `pipe`;
+- `literal`, for the command's own here-doc or here-string, when nothing may read it first;
+- `unknown`.
+
+There is no file kind: a path can name any descriptor at run time, so `<path` gives
+`unknown`, and its redirect stays in `redirects` for the caller.
+
+## 8.4 Rule 5: bounded work
+
+`Limits` sets three bounds: `max_input_bytes` (8 KiB), `max_work` (4096 nodes) and
+`max_depth` (100 levels). tree-sitter-bash's parse time grows with the square of the input,
+so the size cap is checked before encoding and again before parsing. Callers can pass their
+own limits.
+
+## 8.5 The differential test
+
+Rule 1's list is checked by sampling, not proven complete. `tests/test_differential.py`
+generates command lines and compares the walker with three oracles:
+- `bash -n`;
+- shfmt's syntax tree;
+- bash's own reprint of the line as a function body, run in bubblewrap with markers that
+  catch a line that escapes the wrapper.
+
+For each line bash accepts and the walker trusts, every simple command an oracle sees must
+be among the walker's invocations, and every word the walker calls literal must match.
+Accepted differences are listed with a reason in `tests/differential/known.toml`. CI runs
+it on bash 5.1, 5.2 and 5.3.
+
+## 8.6 Policy stays with the caller
+
+bashwalker reports facts and the worst case; it never says "allowed" or "blocked". Callers
+differ: nl-shell confirms anything mutating, and pdca-harness's guard blocks pushes to
+protected branches. The same facts serve both. The helpers `command_head()` and
+`may_rewire_stdin()` are facts too: what runs, and whether it can change the shell's own
+stdin.
+
+## 8.7 Errors never quote the input
+
+`ParseRefused` carries fixed text only. The input may hold secrets or terminal control
+characters, and a caller logs or prints the refusal.
+
+## 8.8 Security
+
+The threat model is [§14](14-threat-model.md), with a scanner-facing copy in
+[`.oss-scanner/threat_model.md`](../../../.oss-scanner/threat_model.md). Update both in the
+same pull request when a change touches any of these:
+- a rule or a proven form;
+- the facts or their meaning;
+- the limits;
+- the pins;
+- a workflow's permissions.
+
+A form found that the grammar misreads becomes a test and an entry in §14.5.

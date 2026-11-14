@@ -1623,7 +1623,9 @@ def _changes_line_reading(invocation: Invocation) -> bool:
     """Whether ``invocation`` is ``set`` or ``shopt`` (``command`` / ``builtin`` in front
     looked through) setting an option outside the trusted lists above."""
     head = command_head(invocation)
-    if head is None or not head.literal or head.text not in ("set", "shopt"):
+    # The decoded name counts even when it is not literal: `$'set' -H` runs `set`. Any
+    # other unreadable command word is unseen code (`_runs_unseen_code`).
+    if head is None or head.text not in ("set", "shopt"):
         return False
     words = list(invocation.words)
     args = words[words.index(head) + 1 :]
@@ -1639,6 +1641,9 @@ def _set_changes_reading(args: list[Word]) -> bool:
         if not word.literal:
             return True
         text = word.text
+        if text == "+":
+            i += 1
+            continue  # bash skips a lone `+` and goes on reading options
         if text in ("--", "-") or len(text) < 2 or text[0] not in "-+":
             return False  # the rest are positional parameters
         sign = text[0]

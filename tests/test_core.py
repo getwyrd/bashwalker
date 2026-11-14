@@ -236,6 +236,10 @@ MODE_UNTRUSTED = [
     "for POSIXLY_CORRECT in 1; do :; done\ntime -p type echo",
     ': "${POSIXLY_CORRECT:=1}"\ntime -p type echo',
     ": ${BASH_COMPAT=42}",
+    "$'set' -H",
+    "$'shopt' -s extglob",
+    "set + -k; command printf '<%s>\\n' a=b c",
+    "set + + -o posix",
 ]
 MODE_TRUSTED = [
     "set -euo pipefail; ls",

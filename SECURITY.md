@@ -2,7 +2,10 @@
 
 bashwalker is early software (0.1.x). Its API isn't stable yet, but its one security
 promise holds from the start: a fact `walk()` reports as proven holds for bash, in the
-supported versions (today 5.1–5.3; see architecture §1.5). Its callers
+supported versions (today 5.1–5.3; see architecture §1.5). The known exceptions are listed
+in [§14.9](docs/design/architecture/14-threat-model.md#149-gaps-and-their-disposition),
+each with an open issue (today wrong prefix facts for `PATH=… $(true)` (#28) and `coproc`
+(#26)). Its callers
 decide whether a command runs based on those facts; nl-shell and pdca-harness are the first,
 with their integrations in progress. We want to hear about anything that breaks the
 promise, including flaws in the design itself.

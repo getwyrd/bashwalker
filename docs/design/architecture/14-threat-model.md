@@ -154,6 +154,6 @@ inputs that hold control characters in refused lines (`test_refusals_never_quote
   its generator does not produce can still be missing, and it does not compare stdin,
   redirect or assignment facts, which only the unit tests cover.
 - **Known misreads, open in nl-shell and moving here:** wrong stdin and prefix facts for
-  `PATH=… $(true)` and `coproc` (nl-shell#212; its `</dev/stdin` form is fixed). The two
+  `PATH=… $(true)` and `coproc` (#26; first reported as nl-shell#212, whose `</dev/stdin` form is fixed). The two
   backtick forms of nl-shell#213 are flagged by Rule 1; other forms of the same kind are
   for the differential oracle to find.

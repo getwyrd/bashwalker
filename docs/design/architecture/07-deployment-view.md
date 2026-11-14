@@ -11,19 +11,19 @@ tags:
 
 ## 7.1 What the user gets
 
-A pure-Python package, installed from a git tag and pinned exactly:
+bashwalker is deployed as a package on PyPI, which callers install and pin exactly:
 
 ```
-bashwalker @ git+https://github.com/getwyrd/bashwalker@v0.1.1
+pip install bashwalker==X.Y.Z
 ```
 
-It runs wherever its two dependencies have wheels: tree-sitter 0.26.0 (a native extension)
-and tree-sitter-bash 0.25.1 (the compiled grammar). It runs inside the caller's process and
-starts nothing. No released caller uses it yet. The planned callers, nl-shell (nl-shell#245)
-and pdca-harness (pdca-harness#957), run on Linux: nl-shell on an Ubuntu 26.04 desktop, and
-pdca-harness wherever its agents run.
+Each release tag builds an sdist and a pure-Python wheel and publishes them with PyPI's
+trusted publishing (OIDC, no stored token). Until the first PyPI release (#25), callers
+install from the git tag (`bashwalker @ git+https://github.com/getwyrd/bashwalker@v0.1.1`).
 
-**[OPEN]** Publishing to PyPI. Until then, callers install from the git tag.
+The package runs wherever its two dependencies have wheels: tree-sitter 0.26.0 (a native
+extension) and tree-sitter-bash 0.25.1 (the compiled grammar). It runs inside the caller's
+process and starts nothing. CI tests it on Linux.
 
 ## 7.2 Test matrix
 

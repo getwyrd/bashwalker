@@ -79,7 +79,7 @@ facts by a caller.
   read, any indirect `${!name}` and any `coproc` are flagged. Arithmetic run by `eval`, `source` or a
   callback is the caller's (the walker reports those commands, not what they run); a
   hidden command reached through arithmetic in one line otherwise is in scope.
-- Wrong stdin and prefix facts for `PATH=… $(true)` and `coproc` (nl-shell#212). Known;
+- Wrong stdin and prefix facts for `PATH=… $(true)` and `coproc` (#26, first reported as nl-shell#212). Known;
   variants beyond them are in scope.
 - What a command runs later (`eval`'s argument, `source`d files, `python -c`, aliases,
   functions defined elsewhere) is not in the line. The walker reports the command, not

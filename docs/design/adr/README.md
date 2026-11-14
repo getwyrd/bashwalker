@@ -57,25 +57,27 @@ frontmatter, and both sides of every supersession agree. Run
 | [0003](0003-proposal-and-spec-process.md) | Proposal and specification process, lifecycle, and immutability | Accepted |
 | [0004](0004-supersession.md) | How a frozen document is superseded | Accepted |
 | [0005](0005-issue-priority-and-automated-triage.md) | Issue priority: severity and reach set P0–P3, applied by hand or by a bot | Proposed |
+| [0006](0006-parse-with-pinned-tree-sitter-bash.md) | Parse with tree-sitter-bash, pinned exactly | Proposed |
+| [0007](0007-facts-only-no-policy.md) | Report facts only; policy belongs to the caller | Proposed |
+| [0008](0008-unproven-means-worst-case.md) | A fact not proven is reported as the worst case | Proposed |
+| [0009](0009-arithmetic-trusted-only-as-literal-numbers.md) | Arithmetic is trusted only when it is literal numbers | Proposed |
 
 ## ADR candidates
 
+None at the moment: the decisions that were settled elsewhere are now ADR-0006 to ADR-0009.
+Support for several bash versions is draft proposal 0001.
+
 | Candidate | Where it is decided now | Why it will need an ADR |
 |-----------|-------------------------|-------------------------|
-| Parse with tree-sitter-bash, pinned exactly | Extraction (#3), `pyproject.toml`, architecture §2.1 and §4.2 | Every fact depends on it; a pin move or a parser change is the largest change the project can make |
-| Facts only, no policy | Module docstring, architecture §1.5 and §8.6 | Callers will ask for allow/deny helpers; adding one changes what the project promises |
-| Unproven means worst case, never a guess | Module docstring, architecture §8, threat model §14.2 | It is the rule every proven form is judged by |
-| Arithmetic is trusted only when it is literal numbers | #12, architecture §8.1, threat model §14.5 | It trades precision for soundness; a request to prove some names numeric again will contest it |
 
 ## Why not ...?
 
 - **Why not ask bash itself?** bashwalker runs in the caller's process on every line, with
   no subprocess (architecture §2.1). `bash -n` checks syntax but gives no tree. bash is the
-  oracle in the differential test instead (§8.5).
+  oracle in the differential test instead (ADR-0006).
 - **Why not return allowed or blocked?** Callers need different rules from the same facts
-  (§8.6).
+  (ADR-0007).
 - **Why not prove a variable numeric from an earlier assignment?** That was v0.1.0's
-  approach, and review kept finding ways around it (#10, #12). §8.1 has the rule that
-  replaced it.
+  approach, and review kept finding ways around it (ADR-0009).
 - **Why not a version range for tree-sitter-bash?** A grammar release changes the facts;
-  only a reviewed pin change may do that (§2.1).
+  only a reviewed pin change may do that (ADR-0006).

@@ -37,7 +37,7 @@ sequenceDiagram
 
 The caller reads `walked.untrusted` first. An empty tuple means the tree is trusted and the
 facts hold. Otherwise the caller treats the whole line as the worst case for its rules:
-nl-shell's gate asks for confirmation, and pdca-harness's guard blocks (both planned callers).
+For example, an interactive shell asks for confirmation, and an agent's guard blocks.
 
 ## 6.2 Other important paths
 

@@ -16,7 +16,7 @@ The C4 source is [`diagrams/c4-context.mermaid`](diagrams/c4-context.mermaid).
 ```mermaid
 graph LR
     author(["Line author<br/>model, agent or person"])
-    caller["Caller<br/>planned: nl-shell policy gate,<br/>pdca-harness STOP guard"]
+    caller["Caller<br/>e.g. a shell's policy gate,<br/>an agent's command guard"]
     bw["bashwalker<br/>walk(line) → Walk"]
     ts["tree-sitter 0.26.0 +<br/>tree-sitter-bash 0.25.1<br/>(pinned)"]
     bash["bash<br/>(run by the caller)"]

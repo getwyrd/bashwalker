@@ -12,10 +12,10 @@ tags:
 One principle runs through all of them: **nothing is proven until it is proven.** Each fact
 starts as the worst case and becomes proven only through a short list of forms that tests
 cover. A form that isn't on a list stays the worst case. That keeps the walker sound
-(goal 1) at the cost of some precision (goal 3). The rules are numbered as in nl-shell's
-`policy-gate/v1` specification, where the walker comes from. Rule 4 there decides which
-redirects are safe; that is policy, so it stayed in nl-shell, and bashwalker only records
-the redirect facts it needs.
+(goal 1) at the cost of some precision (goal 3) (ADR-0008). The rules keep the numbers of
+the policy specification the walker was first written for. Rule 4 there decides which
+redirects are safe; that is policy, so it belongs to callers (ADR-0007), and bashwalker only
+records the redirect facts it needs.
 
 ## 8.1 Rule 1: trusting the tree
 
@@ -97,8 +97,8 @@ it on bash 5.1, 5.2 and 5.3.
 ## 8.6 Policy stays with the caller
 
 bashwalker reports facts and the worst case; it never says "allowed" or "blocked". Callers
-differ: nl-shell's gate confirms anything mutating, and pdca-harness's guard blocks pushes
-to protected branches. Once their integrations land, the same facts serve both. The helpers `command_head()` and
+differ: an interactive shell may confirm anything that changes the system, and an agent's
+guard may block only pushes to protected branches. The same facts serve both (ADR-0007). The helpers `command_head()` and
 `may_rewire_stdin()` are facts too: what runs, and whether it can change the shell's own
 stdin.
 

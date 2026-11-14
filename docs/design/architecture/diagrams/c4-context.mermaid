@@ -3,7 +3,7 @@ C4Context
   title System context for bashwalker
 
   Person(author, "Line author", "A language model, an agent or a person who writes a bash command line")
-  System_Ext(caller, "Caller", "Decides whether a line may run; planned: nl-shell's policy gate, pdca-harness's STOP guard")
+  System_Ext(caller, "Caller", "Decides whether a line may run, for example a shell's policy gate or an agent's command guard")
   System(system, "bashwalker", "A bash command line in, proven facts per simple command out: a fail-closed tree-sitter-bash walker")
   System_Ext(grammar, "tree-sitter + tree-sitter-bash", "Parser runtime and bash grammar, pinned exactly")
   System_Ext(bash, "bash", "Runs the lines the caller allows")

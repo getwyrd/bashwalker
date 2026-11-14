@@ -13,12 +13,13 @@ tags:
 
 | Step | What it proves | Release |
 |---|---|---|
-| Extraction (#3) | nl-shell's shell layer works as a package without nl-shell's policy | |
-| Hardening and the differential test (#7) | The walker agrees with bash, shfmt and bash's reprint on generated lines | |
-| Python 3.11 support (#8) | pdca-harness instances can use it | v0.1.0 |
-| Arithmetic rule (#12) | No command hidden in arithmetic is reported as trusted | v0.1.1 |
-| nl-shell integration (nl-shell#245) | The gate runs on bashwalker with no loosened verdicts on nl-shell's corpus | nl-shell release |
-| pdca-harness integration (pdca-harness#957) | The STOP guard (pdca-harness#898) decides on bashwalker's facts | pdca-harness 0.59.1 |
+| Extraction and hardening | The walker works as a package that reports facts only (ADR-0007) and agrees with bash, shfmt and bash's reprint on generated lines (§8.5) | |
+| Python 3.11 support | Tools on older supported Pythons can embed it | v0.1.0 |
+| Arithmetic rule (ADR-0009) | No command hidden in arithmetic is reported as trusted | v0.1.1 |
+| PyPI publishing (#25) | Callers install it with `pip` and pin it exactly (§7) | first PyPI release |
+| `coproc` facts (#26) | `coproc` lines give correct facts or come back untrusted | |
+| Bash versions (proposal 0001, #27) | Facts hold for every bash version a caller names, older and newer | **[OPEN]** |
+| Stable API | Callers can rely on the facts' meaning across minor releases (SECURITY.md) | **[OPEN]** 1.0 |
 
 ## Where to start contributing
 
@@ -33,8 +34,6 @@ tags:
 
 ## Later
 
-- `coproc`: its stdin and prefix facts are wrong (nl-shell#212, moving here). Today the
-  arithmetic rule treats any `coproc` as untrusted.
-- **[OPEN]** Publishing to PyPI, and when to mark the API stable (SECURITY.md).
+- **[OPEN]** Running `ARITHMETIC_SINKS` in bash in CI (§13).
 - **[OPEN]** Moving the grammar pins when tree-sitter-bash releases, with the differential
-  test as the gate.
+  test on every supported bash version as the gate (ADR-0006).

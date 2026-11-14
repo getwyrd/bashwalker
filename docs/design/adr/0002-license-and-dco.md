@@ -14,10 +14,9 @@ tags:
 bashwalker is public. Users need a clear license, and the project needs to know it may
 use what contributors send, without paperwork that deters small contributions.
 
-Its users are developers who embed it in tools that decide whether a command runs: today
-nl-shell and pdca-harness, both Apache-2.0, and possibly commercial agent tooling later.
-They need a permissive license they can ship inside their own product, with an explicit
-patent grant.
+Its users are developers who embed it in tools that decide whether a command runs: first
+nl-shell and pdca-harness, both Apache-2.0. They need a permissive license they can ship
+inside their own product, with an explicit patent grant.
 
 ## Decision
 

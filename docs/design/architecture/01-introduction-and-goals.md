@@ -24,7 +24,8 @@ The walk also lists the features that make the parse untrusted. A caller decides
 command may do; bashwalker makes no policy decision.
 
 It began as the shell layer of [nl-shell](https://github.com/getwyrd/nl-shell)'s policy gate
-and keeps that history. nl-shell's gate and pdca-harness's STOP guard are its first callers.
+and keeps that history. nl-shell's gate and pdca-harness's STOP guard are its first planned
+callers; both integrations are in progress (§9).
 
 ## 1.2 The headline promise
 
@@ -46,13 +47,14 @@ would let through a command it would have blocked.
 | 5 | **Easy to embed** | Pure Python on Python 3.11+, two exactly pinned dependencies, no subprocesses |
 
 When goals conflict, the lower number wins. For example, arithmetic is trusted only when it
-is literal numbers (#12), so goal 1 costs goal 3 lines such as `$((RANDOM % 6))`.
+is literal numbers (#12): goal 1 wins, and goal 3 loses lines such as `$((RANDOM % 6))`,
+which now come back untrusted.
 
 ## 1.4 Stakeholders and target users
 
 - **Callers:** programs that decide whether to run a bash command line written by a model,
-  an agent or a person. Today these are nl-shell's policy gate (nl-shell#245) and
-  pdca-harness's STOP guard (pdca-harness#898, #957).
+  an agent or a person. The first two, still being integrated, are nl-shell's policy gate
+  (nl-shell#245) and pdca-harness's STOP guard (pdca-harness#898, #957).
 - **Their maintainers,** who write the policy on top of the facts and must know which facts
   are proven and which are the worst case (§8).
 - **Contributors,** who add forms to the proven lists or find forms the grammar misreads.

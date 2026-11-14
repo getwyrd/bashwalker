@@ -42,13 +42,15 @@ section 4 adds what an automated triager may and may not do.
 | `reach:edge` | Needs an unusual setup, input or timing |
 | `reach:adversarial` | Only triggers when someone sets it up on purpose |
 
-For bashwalker, *a security or safety property broken* means a fact that `walk()` reports
-as proven while bash disagrees, on a tree it reports as trusted. Examples are a hidden
-command, a word marked literal that bash expands, or a wrong stdin. Callers allow commands
-on those facts (threat model §14.1), so this is `sev:critical`. *A core feature broken*
-means `walk()` crashes, hangs or refuses ordinary command lines. A safe line wrongly
-reported as untrusted is `sev:minor`: callers fail closed, at the cost of a confirmation or
-a block.
+For bashwalker, severity follows the scale in `.oss-scanner/threat_model.md` ("How we rate
+severity"), so a human, the bot and a security review rate the same report the same way:
+
+| Threat-model rating | Severity label | bashwalker examples |
+|---|---|---|
+| Critical | `sev:critical` | In a tree reported as trusted, a command bash runs is missing from the invocations, or a word bash expands is marked literal |
+| High | `sev:major` | Another wrong fact that looks proven in a trusted tree (a stdin, a redirect's descriptor or target, an assignment's role), or an unflagged grammar disagreement |
+| Medium | `sev:major` | Unbounded time or memory within the limits, or a refusal or other diagnostic that quotes the input; also a crash, or ordinary command lines refused |
+| Low | `sev:minor` | A fact reported as the worst case that could have been proven (a safe line reported as untrusted): callers fail closed, at the cost of a confirmation or a block |
 
 **Area: where the issue lives** (for routing and assignment): the `area:*` labels in
 `.github/triage/labels.json`:

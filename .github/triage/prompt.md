@@ -15,9 +15,9 @@ Severity and reach are only used for a `bug`. For the other types, still fill th
 
 ## Severity: how bad it is when it happens
 
-- `critical`: a security or safety property is broken, or a secret leaks. For bashwalker this means walk() reports a fact as proven, on a tree it reports as trusted, that bash disagrees with: a hidden command, a word marked literal that bash expands, or a wrong stdin.
-- `major`: a safety check can be bypassed or silently turns off, walk() crashes or hangs, or it refuses ordinary command lines with no workaround.
-- `minor`: wrong behaviour with a workaround, or it degrades in a way the user can see. A safe command line wrongly reported as untrusted is minor: callers fail closed.
+- `critical`: in a tree walk() reports as trusted, a command bash runs is missing from the invocations, or a word bash expands is marked literal. Also a secret that leaks.
+- `major`: another wrong fact that looks proven in a trusted tree (a stdin, a redirect's descriptor or target, an assignment's role), a grammar disagreement that is not flagged, unbounded time or memory, a refusal or other diagnostic that quotes the input, a crash, or ordinary command lines refused.
+- `minor`: wrong behaviour with a workaround, or it degrades in a way the user can see. A fact reported as the worst case that could have been proven (a safe command line reported as untrusted) is minor: callers fail closed.
 - `trivial`: cosmetic, wording, docs, or a test-only gap.
 
 ## Reach: how likely someone hits it

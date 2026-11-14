@@ -19,7 +19,8 @@ bashwalker @ git+https://github.com/getwyrd/bashwalker@v0.1.1
 
 It runs wherever its two dependencies have wheels: tree-sitter 0.26.0 (a native extension)
 and tree-sitter-bash 0.25.1 (the compiled grammar). It runs inside the caller's process and
-starts nothing. The callers run on Linux: nl-shell on an Ubuntu 26.04 desktop, and
+starts nothing. No released caller uses it yet. The planned callers, nl-shell (nl-shell#245)
+and pdca-harness (pdca-harness#957), run on Linux: nl-shell on an Ubuntu 26.04 desktop, and
 pdca-harness wherever its agents run.
 
 **[OPEN]** Publishing to PyPI. Until then, callers install from the git tag.

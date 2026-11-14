@@ -158,6 +158,10 @@ inputs that hold control characters in refused lines (`test_refusals_never_quote
   generated lines: command splits and literal words. It finds forms by sampling, so one
   its generator does not produce can still be missing, and it does not compare stdin,
   redirect or assignment facts, which only the unit tests cover.
+- **Execution preconditions (§3.2).** The facts assume a bash that does no history expansion
+  (non-interactive, or `set +H`); an interactive shell with it on can rewrite `!` words that
+  `walk()` reports as literal. `terminal` stdin is the stdin the caller gave that bash; a
+  caller that runs the line with piped stdin treats `terminal` as a pipe.
 - **Bash releases outside 5.1–5.3 are not covered.** Their facts can differ (architecture
   §1.5); a caller whose bash is older or newer gets no guarantee. Bash 5.0 is planned (#29);
   releases older than 5.0 will not be supported. Draft proposal 0001

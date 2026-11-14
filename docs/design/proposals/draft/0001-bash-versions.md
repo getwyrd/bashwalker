@@ -23,14 +23,14 @@ These were checked on bash 5.1, 5.2 and 5.3:
 | `&` in `${var/pat/rep}` | literal `&` | the matched text (`patsub_replacement` on by default) | same as 5.2 |
 | `SRANDOM`, `wait -p` | present | present | present |
 
-Older releases differ more. Bash 4.x added associative arrays, namerefs, `|&` and `;&`, and
-3.2, which macOS still ships, has none of them. Newer releases will keep adding forms, as
-5.3 did.
+Bash 5.0 lacks `SRANDOM` and `wait -p`. Older releases differ more: bash 4.x added associative
+arrays, namerefs, `|&` and `;&`, and 3.2, which macOS still ships, has none of them. Newer
+releases will keep adding forms, as 5.3 did.
 
 Today bashwalker targets bash 5.1–5.3 implicitly. The differential test runs on those three,
 and a form whose meaning differs between them is made untrusted or handled as its worst
-case. Nothing records which version a fact holds for, there is no way to add an older or a
-newer release, and a caller whose bash is known can't get the more precise facts that
+case. Nothing records which version a fact holds for, there is no way to add another
+release, and a caller whose bash is known can't get the more precise facts that
 version allows.
 
 ## Design
@@ -50,7 +50,7 @@ the line, passes that version and gets facts that need not cover the others.
 
 **Version profiles are data.** A module `bashwalker.versions` lists, for each supported
 release, what the walker needs to know:
-- syntax added or removed (`${ cmd; }` from 5.3, `|&` from 4.0);
+- syntax added or removed (`${ cmd; }` from 5.3);
 - integer variables (`SRANDOM` from 5.1);
 - default `shopt` settings that change expansion (`patsub_replacement` from 5.2);
 - builtin options the walker reads (`wait -p` from 5.1).
@@ -70,13 +70,16 @@ version.
 3. Each difference it finds becomes a profile entry with a test.
 4. The release joins the supported set.
 
-An older release is added the same way, back to the oldest version chosen (open question 1).
+Bash 5.0 is added the same way (#29). No release older than 5.0 is added (question 1).
 A grammar pin move (ADR-0006) must pass the differential test on every supported version.
 
 ## Alternatives considered
 
 - **Support only the newest bash.** This is the simplest option, but it gives wrong facts for
-  every machine running an older bash, including macOS's 3.2.
+  every machine running an older bash, such as the 5.1 and 5.2 of current Linux LTS releases.
+- **Support back to 3.2 (macOS's `/bin/bash`) or 4.4.** Every older release adds profile
+  entries and turns more of today's proven facts into the worst case for callers using the
+  default. Rejected: the oldest release is 5.1, with 5.0 to follow (question 1).
 - **One walker per version (separate packages or pinned releases).** It avoids profiles, but
   a caller that doesn't know its bash can't get a fail-closed answer across versions, and
   every fix would have to be repeated in each one.
@@ -105,12 +108,13 @@ versions outside 5.1–5.3 are not covered.
 ## Backward compatibility
 
 The parameter is optional, and its default keeps today's behaviour, so existing callers are
-unaffected. Adding an older version to the default set can turn facts that are proven today
-into the worst case. Such a change is announced in the release notes.
+unaffected. Adding a version to the default set, such as 5.0 (#29), can turn facts that are
+proven today into the worst case. Such a change is announced in the release notes.
 
 ## Open questions
 
-1. **[OPEN]** Which is the oldest bash to support: 3.2 (macOS), 4.4, or 5.0?
+1. **Decided:** the oldest supported bash is 5.1. Support for 5.0 is tracked in #29. Releases
+   older than 5.0 will not be supported.
 2. **[OPEN]** Should the default stay "all supported versions", or should callers have to
    name a version?
 3. **[OPEN]** When a new bash release comes out, does it join the supported set (and so the

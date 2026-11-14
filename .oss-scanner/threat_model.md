@@ -68,8 +68,8 @@ Lower priority: `scripts/build_bash.py` (test tooling), the GitHub workflows.
 Out of scope: tree-sitter and tree-sitter-bash themselves (report a grammar bug only if
 bashwalker's use of it turns it into a wrong fact that looks proven); policy built on the
 facts by a caller; a disagreement that shows only with a bash release outside the supported
-ones (for example 3.2, or a newer release not yet added), which is a version-support request
-(draft proposal 0001).
+ones (5.0 until #29 adds it, or a newer release not yet added), which is a version-support
+request (draft proposal 0001). Releases older than 5.0 are not supported.
 
 ## Known gaps: do not report these on their own
 

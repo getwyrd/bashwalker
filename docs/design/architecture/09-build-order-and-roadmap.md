@@ -18,7 +18,8 @@ tags:
 | Arithmetic rule (ADR-0009) | No command hidden in arithmetic is reported as trusted | v0.1.1 |
 | PyPI publishing (#25) | Callers install it with `pip` and pin it exactly (§7) | first PyPI release |
 | `coproc` facts (#26) | `coproc` lines give correct facts or come back untrusted | |
-| Bash versions (proposal 0001, #27) | Facts hold for every bash version a caller names, older and newer | **[OPEN]** |
+| Bash versions (proposal 0001, #27) | Facts hold for every supported bash version a caller names | **[OPEN]** |
+| Bash 5.0 (#29) | Facts hold for 5.0 as well; nothing older is supported | **[OPEN]** |
 | Stable API | Callers can rely on the facts' meaning across minor releases (SECURITY.md) | **[OPEN]** 1.0 |
 
 ## Where to start contributing

@@ -81,11 +81,14 @@ bashwalker parses with tree-sitter-bash, pinned exactly (ADR-0006).
 
 A line can mean different things in different bash releases. In bash 5.3, `${ cmd; }` runs
 `cmd`; in 5.1 and 5.2 it is a syntax error. From 5.2, `&` in `${var/pat/rep}` stands for the
-matched text; before, it was literal. Bash 3.2, which macOS still ships, has no associative
-arrays or namerefs. Today the facts describe bash 5.1–5.3, which the differential test
-covers. A form that differs between them is handled as its worst case.
+matched text; before, it was literal. Today the facts describe bash 5.1–5.3, which the
+differential test covers. A form that differs between them is handled as its worst case.
 
-**[OPEN]** Draft proposal 0001 (#27) designs support for several versions, older and newer:
+The oldest supported release is 5.1. Bash 5.0 is planned (#29). Releases older than 5.0, such
+as the 3.2 that macOS ships as `/bin/bash`, will not be supported: a caller running them gets
+no guarantee.
+
+**[OPEN]** Draft proposal 0001 (#27) designs support for several versions as they appear:
 a caller states the versions a line may run on, and each fact must hold for all of them.
 
 ## 1.6 Quality goals

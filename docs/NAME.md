@@ -1,10 +1,11 @@
 # Why "bashwalker"
 
-> **How to fill this in:** a few paragraphs on where the name comes from and what it is
-> meant to suggest, plus any naming scheme the project uses for its components. If the name
-> was a decision with alternatives, record it as an ADR too and link it here. Example:
-> wyrd's [NAME.md](https://github.com/getwyrd/wyrd/blob/main/docs/NAME.md). Delete this block
-> once it is written; if the name needs no explanation, delete this file and its row in
-> `README.md`.
+The name says what the library does: it **walks** the syntax tree of a **bash** command
+line. `walk()` visits every named node of the tree tree-sitter-bash builds and reports what it
+finds, one simple command at a time. A tree walker is the ordinary name for that kind of
+code. Like the library, the name says nothing about policy: bashwalker describes a command
+line and does not judge it.
 
-_Where the name comes from, and what it means for the project._
+The library began as the shell layer of nl-shell's policy gate and was split out so that
+nl-shell and pdca-harness could share it. "aibasher" was also considered before the name
+was settled.

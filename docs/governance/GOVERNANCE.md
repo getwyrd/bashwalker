@@ -11,15 +11,6 @@ tags:
 
 > **Status: RATIFIED.** This records the project's decision-making structure — roles, the architecture board, and the decision and amendment processes. Ratified by the founding maintainer (the sole maintainer during bootstrap) per the amendment rule below; further changes follow that process.
 
-> **How to fill this in:** this is wyrd's governance with the project name, founding
-> maintainer and contact filled in by `init-repo.sh`. Read it once and adjust what doesn't
-> fit: the role ladder, the thresholds (two maintainers for an Associate, two-thirds for a
-> Maintainer), the inactivity periods, and whether an architecture board is needed at all;
-> a single-maintainer project can keep the bootstrap rules indefinitely. Changes follow
-> *Amending this document* below. Reference: wyrd's
-> [GOVERNANCE.md](https://github.com/getwyrd/wyrd/blob/main/docs/governance/GOVERNANCE.md).
-> Delete this block once you have reviewed it.
-
 ## Purpose
 
 bashwalker is an open-source project built initially by a small team and dependent on outside contributors (see [ADR-0001](../design/adr/0001-record-architecture-decisions.md)). This document makes explicit *who holds which responsibilities* and *how decisions are made*, so that authority is stated rather than assumed.
@@ -59,7 +50,7 @@ Maintainers review and **merge** contributions, triage, set day-to-day direction
 
 ### Founding maintainer
 
-A rule that maintainers are elected by maintainers needs a seed. **Eduard R. is the founding (first) maintainer**, by virtue of starting the project; the maintainer group grows from there by election. The founding maintainer is a full Maintainer who additionally holds **bootstrap authority** until the maintainer group and the board are established — sole maintainer, and sole elector and **chair** of the initial board. This authority is **transitional** and dissolves once the board is constituted (after which the board elects its own chair); the founding maintainer holds **no standing power** beyond it.
+A rule that maintainers are elected by maintainers needs a seed. **Eduard Ralph is the founding (first) maintainer**, by virtue of starting the project; the maintainer group grows from there by election. The founding maintainer is a full Maintainer who additionally holds **bootstrap authority** until the maintainer group and the board are established — sole maintainer, and sole elector and **chair** of the initial board. This authority is **transitional** and dissolves once the board is constituted (after which the board elects its own chair); the founding maintainer holds **no standing power** beyond it.
 
 The founding maintainer may be elected board chair like any member, but does not hold it automatically. The founding-maintainer role **voids after one year of inactivity** and is then **left empty** — not re-filled or inherited; the project then continues under the maintainers and the board.
 

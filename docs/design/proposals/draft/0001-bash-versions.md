@@ -1,0 +1,132 @@
+---
+created: 14.11.2026 12:00
+type: proposal
+status: draft
+author: Eduard Ralph
+tracking-issue: 27
+supersedes:
+tags:
+  - proposal
+  - bash-versions
+---
+# Proposal: Support several bash versions
+
+## Motivation
+
+The facts bashwalker reports describe what bash does with a line, and bash changes from
+release to release. A line can mean different things depending on the bash that runs it.
+These were checked on bash 5.1, 5.2 and 5.3:
+
+| Form | 5.1 | 5.2 | 5.3 |
+|---|---|---|---|
+| `${ cmd; }` | bad substitution | bad substitution | runs `cmd` in the current shell |
+| `&` in `${var/pat/rep}` | literal `&` | the matched text (`patsub_replacement` on by default) | same as 5.2 |
+| `SRANDOM`, `wait -p` | present | present | present |
+
+Bash 5.0 lacks `SRANDOM` and `wait -p`. Older releases differ more: bash 4.x added associative
+arrays, namerefs, `|&` and `;&`, and 3.2, which macOS still ships, has none of them. Newer
+releases will keep adding forms, as 5.3 did.
+
+Today bashwalker targets bash 5.1–5.3 implicitly. The differential test runs on those three,
+and a form whose meaning differs between them is made untrusted or handled as its worst
+case. Nothing records which version a fact holds for, there is no way to add another
+release, and a caller whose bash is known can't get the more precise facts that
+version allows.
+
+## Design
+
+**A fact holds for a set of versions.** `walk()` gets one parameter describing the bash the
+line may run on: its versions and, optionally, the `shopt` and `set` options the caller knows
+are on or off (question 4):
+
+```python
+walk(line, bash=Bash("5.2"))                       # the caller knows its version
+walk(line, bash=Bash("5.2", on={"extglob"}))      # ... and that extglob is on
+walk(line)                                          # default: every supported version
+```
+
+An option the caller doesn't mention may be on or off. A fact is proven only when it holds
+for **every** version in the set, with every setting of the options left open. The default is the
+full supported set, so the default stays fail-closed and gives the same results as today.
+A caller that knows its bash, for example from `$BASH_VERSINFO` in the session that will run
+the line, passes that version and gets facts that need not cover the others.
+
+**Version profiles are data.** A module `bashwalker.versions` lists, for each supported
+release, what the walker needs to know:
+- syntax added or removed (`${ cmd; }` from 5.3);
+- integer variables (`SRANDOM` from 5.1);
+- default `shopt` settings that change expansion (`patsub_replacement` from 5.2);
+- builtin options the walker reads (`wait -p` from 5.1).
+
+The rules consult the profile instead of hard-coding one bash. A difference that the
+profiles don't describe is handled as today: as the worst case.
+
+**One grammar for all versions.** tree-sitter-bash parses a superset of bash (ADR-0006).
+Syntax that only some targeted versions accept, or that means different things in them,
+makes the tree untrusted unless the profiles say it means the same thing in every targeted
+version.
+
+**Adding versions over time.** A new bash release is added in this order:
+
+1. `scripts/build_bash.py` builds it.
+2. The differential test runs against it in CI.
+3. Each difference it finds becomes a profile entry with a test.
+4. The release joins the supported set in a bashwalker release whose notes announce it
+   (question 3).
+
+Bash 5.0 is added the same way (#29). No release older than 5.0 is added (question 1).
+A grammar pin move (ADR-0006) must pass the differential test on every supported version.
+
+## Alternatives considered
+
+- **Support only the newest bash.** This is the simplest option, but it gives wrong facts for
+  every machine running an older bash, such as the 5.1 and 5.2 of current Linux LTS releases.
+- **Support back to 3.2 (macOS's `/bin/bash`) or 4.4.** Every older release adds profile
+  entries and turns more of today's proven facts into the worst case for callers using the
+  default. Rejected: the oldest release is 5.1, with 5.0 to follow (question 1).
+- **One walker per version (separate packages or pinned releases).** It avoids profiles, but
+  a caller that doesn't know its bash can't get a fail-closed answer across versions, and
+  every fix would have to be repeated in each one.
+- **Detect the version by running bash.** bashwalker doesn't start processes (ADR-0006). The
+  caller knows which bash will run the line; bashwalker does not.
+
+## Graduation criteria
+
+- `walk(line, bash=…)` exists, and its default (all supported versions) gives the same facts
+  as today for bash 5.1–5.3.
+- Every profile entry has a test, and the differential test runs on every supported version
+  in CI.
+- The documentation lists the supported versions and how a caller chooses them (architecture
+  §2, §7, §8).
+
+## Security impact
+
+The line is still the untrusted input (threat model §14.2). The new trusted input is the
+caller's statement of which bash will run the line, and with which options. A caller that
+names the wrong version or option
+can get facts that don't hold for the bash that actually runs. The default (all versions)
+is fail-closed, and the documentation tells callers to name a version only when they know
+it. The pull request that implements this adds the new input and its mitigation to both
+threat-model copies (§14 and `.oss-scanner/threat_model.md`); today §14.9 records only that
+versions outside 5.1–5.3 are not covered.
+
+## Backward compatibility
+
+The parameter is optional, and its default keeps today's behaviour, so existing callers are
+unaffected. Adding a version to the default set, such as 5.0 (#29), can turn facts that are
+proven today into the worst case. Such a change is announced in the release notes.
+
+## Open questions
+
+1. **Decided:** the oldest supported bash is 5.1. Support for 5.0 is tracked in #29. Releases
+   older than 5.0 will not be supported.
+2. **Decided:** the default stays "all supported versions". A caller that names no version
+   gets only facts that hold for every one of them, so nothing is reported as proven that
+   isn't proven for the bash the caller may have (ADR-0008).
+3. **Decided:** a new bash release joins the supported set, and so the default, only in a
+   bashwalker release whose notes announce it, after the steps under "Adding versions over
+   time". The facts a caller gets never change without a bashwalker release. Until a bash
+   release is added, a caller running it gets no guarantee (threat model §14.9).
+4. **Decided:** `shopt` and `set` options a caller knows (for example `extglob`) belong in
+   the same parameter as the version. They are tied together: the version decides some
+   options' defaults (`patsub_replacement` is on from 5.2).

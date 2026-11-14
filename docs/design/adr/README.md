@@ -57,24 +57,27 @@ frontmatter, and both sides of every supersession agree. Run
 | [0003](0003-proposal-and-spec-process.md) | Proposal and specification process, lifecycle, and immutability | Accepted |
 | [0004](0004-supersession.md) | How a frozen document is superseded | Accepted |
 | [0005](0005-issue-priority-and-automated-triage.md) | Issue priority: severity and reach set P0–P3, applied by hand or by a bot | Proposed |
+| [0006](0006-parse-with-pinned-tree-sitter-bash.md) | Parse with tree-sitter-bash, pinned exactly | Proposed |
+| [0007](0007-facts-only-no-policy.md) | Report facts only; policy belongs to the caller | Proposed |
+| [0008](0008-unproven-means-worst-case.md) | A fact not proven is reported as the worst case | Proposed |
+| [0009](0009-arithmetic-trusted-only-as-literal-numbers.md) | Arithmetic is trusted only when it is literal numbers | Proposed |
 
 ## ADR candidates
 
-<!-- How to fill this in: list decisions that are already settled somewhere else (a
-     proposal, the architecture overview, a code comment) and would need an ADR the first
-     time someone contests them, or that would change what an accepted ADR or an AGENTS.md
-     MUST rule says. Extract one into an ADR when it is first cited to settle an argument;
-     earlier is filing for its own sake. Delete a row when its ADR is written. Example:
-     autobook's "Decisions not yet recorded"
-     (https://github.com/Ralphovi/autobook/blob/main/docs/design/adr/README.md). -->
+None at the moment: the decisions that were settled elsewhere are now ADR-0006 to ADR-0009.
+Support for several bash versions is draft proposal 0001.
 
 | Candidate | Where it is decided now | Why it will need an ADR |
 |-----------|-------------------------|-------------------------|
 
 ## Why not ...?
 
-<!-- How to fill this in: name the alternatives people keep proposing ("why not X?") and
-     point at where the answer is written down: an ADR, the architecture overview's
-     section 11, or a proposal. When the answers outgrow a few lines, write a comparison
-     ADR. Example: wyrd's index
-     (https://github.com/getwyrd/wyrd/blob/main/docs/design/adr/README.md). -->
+- **Why not ask bash itself?** bashwalker runs in the caller's process on every line, with
+  no subprocess (architecture §2.1). `bash -n` checks syntax but gives no tree. bash is the
+  oracle in the differential test instead (ADR-0006).
+- **Why not return allowed or blocked?** Callers need different rules from the same facts
+  (ADR-0007).
+- **Why not prove a variable numeric from an earlier assignment?** That was v0.1.0's
+  approach, and review kept finding ways around it (ADR-0009).
+- **Why not a version range for tree-sitter-bash?** A grammar release changes the facts;
+  only a reviewed pin change may do that (ADR-0006).

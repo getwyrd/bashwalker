@@ -23,3 +23,4 @@ and its [proposal index](https://github.com/getwyrd/wyrd/blob/main/docs/design/p
 
 | # | Title | Status |
 |---|-------|--------|
+| [0001](draft/0001-bash-versions.md) | Support several bash versions | draft |

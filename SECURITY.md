@@ -5,7 +5,7 @@ promise holds from 0.1.1 on: a fact `walk()` reports as proven holds for bash, i
 supported versions (today 5.1–5.3 at the patch levels CI tests: 5.1.16, 5.2.37 and 5.3.20;
 see architecture §1.5). Other patch levels of those releases are expected to agree but are
 not tested; a disagreement on one is in scope. The facts also assume a non-interactive bash
-or one with history expansion off, and `terminal` stdin means the stdin the caller gave bash
+or one with history expansion off, not in POSIX mode, and `terminal` stdin means the stdin the caller gave bash
 (architecture §3.2). The known exceptions are listed
 in [§14.9](docs/design/architecture/14-threat-model.md#149-gaps-and-their-disposition),
 each with an open issue (today wrong stdin and prefix facts for `PATH=… $(true)` (#28) and `coproc`
@@ -66,7 +66,8 @@ are not in themselves security issues.
   The facts themselves (word text, assignment values, redirect targets) carry the input on
   purpose.
 - A workflow or CI weakness that lets a fork's pull request write to the repository or
-  read secrets.
+  read secrets, or that lets an issue's text (which anyone can write) steer the triage
+  workflow beyond its labels, assignee and one comment.
 
 **Out of scope:** the documented residuals in
 [§14.8](docs/design/architecture/14-threat-model.md#148-residual-and-accepted-risks):
@@ -74,7 +75,8 @@ are not in themselves security issues.
   newer release not yet added): open a normal issue. Releases older than 5.0 are not
   supported;
 - what `eval`, `source`, a script or a non-literal command word runs later;
-- run-time shell state.
+- run-time shell state that exists before the line runs (§14.8). State the line itself
+  changes (aliases, assignments, `hash -p`, arithmetic that writes a variable) is in scope.
 
 A safe line reported as untrusted is a precision bug, not a vulnerability: please open a
 normal issue.

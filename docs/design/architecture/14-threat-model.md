@@ -158,10 +158,8 @@ inputs that hold control characters in refused lines (`test_refusals_never_quote
   generated lines: command splits and literal words. It finds forms by sampling, so one
   its generator does not produce can still be missing, and it does not compare stdin,
   redirect or assignment facts, which only the unit tests cover.
-- **Execution preconditions (§3.2).** The facts assume a bash that does no history expansion
-  (non-interactive, or `set +H`) and is not in POSIX mode (`set -o posix`,
-  `POSIXLY_CORRECT`, or started as `sh`), where some forms parse differently (`time -p`),
-  for the whole run. An interactive shell with history expansion on can rewrite `!` words
+- **Execution preconditions (§3.2).** The facts assume the options that change how bash
+  reads a line keep these settings for the whole run: history expansion off (non-interactive, or `set +H`), POSIX mode off (`set -o posix`, `POSIXLY_CORRECT`, started as `sh`) and `interactive_comments` on. An interactive shell with history expansion on can rewrite `!` words
   that `walk()` reports as literal. The walker does not yet make every line that turns one
   of these modes on itself untrusted; a fix is in progress, tracked privately as SECURITY.md
   asks. `terminal` stdin is the stdin the caller gave that bash; a

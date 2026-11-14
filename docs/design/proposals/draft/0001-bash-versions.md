@@ -69,7 +69,14 @@ options or the shell's mode, such as `BASH_COMPAT`, `POSIXLY_CORRECT`, `SHELLOPT
 bashwalker sees only the line. A declaration (or `fresh=True`) is the caller vouching that
 nothing outside the line changes an option while it runs: a shell with a `DEBUG`, `ERR` or
 `RETURN` trap, or anything else that runs code between the line's commands, must not
-declare options. A fact is proven only when it holds for
+declare options.
+
+The options that change how bash reads a line (history expansion, POSIX mode,
+`interactive_comments`) stay outside the profile: they remain caller preconditions
+(architecture §3.2), so "every setting left open" never includes them and the default keeps
+today's results.
+
+A fact is proven only when it holds for
 **every** version in the set, with every setting of the options left open. The default is the
 full supported set, so the default stays fail-closed and gives the same results as today.
 A caller that knows its bash, for example from `$BASH_VERSINFO` in the session that will run

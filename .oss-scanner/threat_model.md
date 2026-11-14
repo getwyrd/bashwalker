@@ -74,10 +74,8 @@ request (draft proposal 0001). Releases older than 5.0 are not supported.
 
 ## Known gaps: do not report these on their own
 
-- The facts assume a bash without history expansion (non-interactive, or `set +H`), not in
-  POSIX mode, and
-  `terminal` stdin means the stdin the caller gave that bash (architecture §3.2). A report
-  that needs history expansion or POSIX mode on, or that only says `terminal` may be a pipe, is a
+- The facts assume, for the whole run, history expansion off (non-interactive, or `set +H`), POSIX mode off (`set -o posix`, `POSIXLY_CORRECT`, started as `sh`) and `interactive_comments` on, and `terminal` stdin means the stdin the caller gave that bash (architecture §3.2). A report
+  that needs one of these settings changed, or that only says `terminal` may be a pipe, is a
   precondition the caller guarantees, not a broken fact. A line that turns one of these modes
   on itself is a known gap, already reported privately.
 - Rule 1 lists the grammar disagreements found so far; the differential test checks it

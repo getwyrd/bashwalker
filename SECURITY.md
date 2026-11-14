@@ -4,8 +4,7 @@ bashwalker is early software (0.1.x). Its API isn't stable yet, but its one secu
 promise holds from 0.1.1 on: a fact `walk()` reports as proven holds for bash, in the
 supported versions (today 5.1–5.3 at the patch levels CI tests: 5.1.16, 5.2.37 and 5.3.20;
 see architecture §1.5). Other patch levels of those releases are expected to agree but are
-not tested; a disagreement on one is in scope. The facts also assume a non-interactive bash
-or one with history expansion off, not in POSIX mode, for the whole run, and `terminal` stdin means the stdin the caller gave bash
+not tested; a disagreement on one is in scope. The facts also assume, for the whole run, history expansion off (non-interactive, or `set +H`), POSIX mode off (`set -o posix`, `POSIXLY_CORRECT`, started as `sh`) and `interactive_comments` on, and `terminal` stdin means the stdin the caller gave bash
 (architecture §3.2). The known exceptions are listed
 in [§14.9](docs/design/architecture/14-threat-model.md#149-gaps-and-their-disposition),
 each with an open issue (today wrong stdin and prefix facts for `PATH=… $(true)` (#28) and `coproc`

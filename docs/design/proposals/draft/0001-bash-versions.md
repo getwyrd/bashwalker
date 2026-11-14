@@ -40,15 +40,18 @@ line may run on: its versions and, optionally, the `shopt` and `set` options the
 are on or off (question 4):
 
 ```python
-walk(line, bash=Bash("5.2"))                       # the caller knows its version
-walk(line, bash=Bash("5.2", on={"extglob"}))      # ... and that extglob is on
-walk(line)                                          # default: every supported version
+walk(line, bash=Bash("5.2"))                                   # the caller knows its version
+walk(line, bash=Bash("5.1", "5.2"))                            # ... or that it is one of these
+walk(line, bash=Bash("5.2", on={"extglob"}, off={"nocaseglob"}))  # ... and some options
+walk(line)                                                      # default: every supported version
 ```
 
 An option the caller doesn't mention may be on or off, whatever its default: a session can
 have changed it. Only a caller that says the line runs in a fresh shell with the version's
 default options (`Bash("5.2", fresh=True)`) gets the profile's defaults for the options it
-doesn't mention. What the caller declares, and a fresh shell's defaults, describe the shell
+doesn't mention. "Fresh" means one shell mode only: a non-interactive `bash -c` started
+without option flags or `BASH_ENV`. An interactive shell (history expansion, among others,
+changes the line before it is parsed) or one started with flags must not claim it. What the caller declares, and a fresh shell's defaults, describe the shell
 only when the line starts. If anything in the line may change an option, every option is
 unknown for the **whole** line, not only after that point: a function or loop can run code
 written before the change after it. What may change an option includes `shopt`, `set`,
@@ -85,7 +88,9 @@ version.
 **Adding versions over time.** A new bash release is added in this order:
 
 1. `scripts/build_bash.py` builds it.
-2. The differential test runs against it in CI.
+2. The differential test and the unit tests for every fact class (words, stdin, redirects,
+   assignments) run against it in CI; the differential test alone covers only command
+   splitting and literal words (§8.5).
 3. Each difference it finds becomes a profile entry with a test.
 4. The release joins the supported set in a bashwalker release whose notes announce it
    (question 3).

@@ -1,9 +1,10 @@
 # Security policy
 
 bashwalker is early software (0.1.x). Its API isn't stable yet, but its one security
-promise holds from the start: a fact `walk()` reports as proven holds for bash. Callers
-such as nl-shell and pdca-harness decide whether a command runs based on those facts. We
-want to hear about anything that breaks the promise, including flaws in the design itself.
+promise holds from the start: a fact `walk()` reports as proven holds for bash. Its callers
+decide whether a command runs based on those facts; nl-shell and pdca-harness are the first,
+with their integrations in progress. We want to hear about anything that breaks the
+promise, including flaws in the design itself.
 
 Versions before 0.1.1 can report a line as trusted while bash runs a command hidden in
 arithmetic. Use 0.1.1 or later.

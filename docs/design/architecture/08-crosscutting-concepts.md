@@ -20,17 +20,18 @@ the redirect facts it needs.
 ## 8.1 Rule 1: trusting the tree
 
 tree-sitter-bash is a grammar for editors, not a reimplementation of bash, and it reads some
-forms differently. `untrusted_features()` lists them:
+forms differently. Each such form found adds a reason to `Walk.untrusted`, and one reason
+is enough to make the whole tree untrusted. The reasons come from two places:
 
-- `ERROR` and `MISSING` nodes;
-- extglob and backslash-newline;
-- unusual here-docs;
-- backtick forms the grammar merges;
-- words read across whitespace;
-- and the rest of §14.5.
+- `untrusted_features()` checks the parse itself: `ERROR` and `MISSING` nodes, extglob,
+  backslash-newline, unusual here-docs, backtick forms the grammar merges, words read across
+  whitespace, and the other parser-level forms in §14.5.
+- `walk()` adds the reasons that need the whole walk: arithmetic (below), a variable bash
+  runs as code (`PS4`, `PROMPT_COMMAND`, …), assigned text holding a substitution, words
+  after a redirect with no command to take them, and the forms the walker meets while
+  visiting (a declaration or `unset` operand with a subscript).
 
-Each feature found adds a reason to `Walk.untrusted`. One reason is enough to make the whole
-tree untrusted.
+So `untrusted_features()` alone is not a full trust verdict (§3.2).
 
 Arithmetic is part of Rule 1. Bash evaluates a variable's run-time value as an arithmetic
 expression in many places, and a subscript in that value runs its command substitutions, so
@@ -96,8 +97,8 @@ it on bash 5.1, 5.2 and 5.3.
 ## 8.6 Policy stays with the caller
 
 bashwalker reports facts and the worst case; it never says "allowed" or "blocked". Callers
-differ: nl-shell confirms anything mutating, and pdca-harness's guard blocks pushes to
-protected branches. The same facts serve both. The helpers `command_head()` and
+differ: nl-shell's gate confirms anything mutating, and pdca-harness's guard blocks pushes
+to protected branches. Once their integrations land, the same facts serve both. The helpers `command_head()` and
 `may_rewire_stdin()` are facts too: what runs, and whether it can change the shell's own
 stdin.
 

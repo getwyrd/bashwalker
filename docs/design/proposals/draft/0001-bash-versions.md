@@ -68,7 +68,8 @@ version.
 1. `scripts/build_bash.py` builds it.
 2. The differential test runs against it in CI.
 3. Each difference it finds becomes a profile entry with a test.
-4. The release joins the supported set.
+4. The release joins the supported set in a bashwalker release whose notes announce it
+   (question 3).
 
 Bash 5.0 is added the same way (#29). No release older than 5.0 is added (question 1).
 A grammar pin move (ADR-0006) must pass the differential test on every supported version.
@@ -115,9 +116,12 @@ proven today into the worst case. Such a change is announced in the release note
 
 1. **Decided:** the oldest supported bash is 5.1. Support for 5.0 is tracked in #29. Releases
    older than 5.0 will not be supported.
-2. **[OPEN]** Should the default stay "all supported versions", or should callers have to
-   name a version?
-3. **[OPEN]** When a new bash release comes out, does it join the supported set (and so the
-   default) automatically, or only in a release that announces it?
+2. **Decided:** the default stays "all supported versions". A caller that names no version
+   gets only facts that hold for every one of them, so nothing is reported as proven that
+   isn't proven for the bash the caller may have (ADR-0008).
+3. **Decided:** a new bash release joins the supported set, and so the default, only in a
+   bashwalker release whose notes announce it, after the steps under "Adding versions over
+   time". The facts a caller gets never change without a bashwalker release. Until a bash
+   release is added, a caller running it gets no guarantee (threat model §14.9).
 4. **[OPEN]** Do `shopt` and `set` options a caller enables (for example `extglob`) belong in
    the same parameter as the version?

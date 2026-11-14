@@ -9,19 +9,14 @@ tags:
 ---
 # 0002. Apache License, Version 2.0 and DCO sign-off
 
-> **How to fill this in:** `init-repo.sh` set the license name from your choice. Add a
-> sentence to *Context* saying who the users are and why this license suits them (wyrd's
-> example: commercial providers need a permissive license with a patent grant). If the
-> project depends on components at pluggable seams, consider adding dependency-selection
-> criteria as wyrd does in
-> [ADR-0003](https://github.com/getwyrd/wyrd/blob/main/docs/design/adr/0003-apache-2-license-and-dco.md).
-> It starts as **Proposed** so you can edit it: fill it in, delete this block, and set
-> `status: Accepted` (and update the index) in one pull request. After that it is frozen.
-
 ## Context
 
 bashwalker is public. Users need a clear license, and the project needs to know it may
 use what contributors send, without paperwork that deters small contributions.
+
+Its users are developers who embed it in tools that decide whether a command runs: first
+nl-shell and pdca-harness, both Apache-2.0. They need a permissive license they can ship
+inside their own product, with an explicit patent grant.
 
 ## Decision
 

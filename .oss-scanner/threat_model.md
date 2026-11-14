@@ -48,6 +48,9 @@ PR number from the payload and posts a fixed comment. A change that adds an
   from bash gives a non-empty `Walk.untrusted`, never a clean tree.
 - **Bounded work.** Input over the size cap is refused before it is parsed; the walk has a
   node budget and a depth limit.
+
+"bash" here means the supported releases, today bash 5.1, 5.2 and 5.3 (the ones the
+differential test runs on).
 - **Refusals never quote the input.**
 
 A finding that breaks one of these is in scope even if no current caller is affected:
@@ -64,7 +67,9 @@ Lower priority: `scripts/build_bash.py` (test tooling), the GitHub workflows.
 
 Out of scope: tree-sitter and tree-sitter-bash themselves (report a grammar bug only if
 bashwalker's use of it turns it into a wrong fact that looks proven); policy built on the
-facts by a caller.
+facts by a caller; a disagreement that shows only with a bash release outside the supported
+ones (for example 3.2, or a newer release not yet added), which is a version-support request
+(draft proposal 0001).
 
 ## Known gaps: do not report these on their own
 
@@ -79,7 +84,7 @@ facts by a caller.
   read, any indirect `${!name}` and any `coproc` are flagged. Arithmetic run by `eval`, `source` or a
   callback is the caller's (the walker reports those commands, not what they run); a
   hidden command reached through arithmetic in one line otherwise is in scope.
-- Wrong stdin and prefix facts for `PATH=… $(true)` and `coproc` (nl-shell#212). Known;
+- Wrong stdin and prefix facts for `PATH=… $(true)` (#28) and `coproc` (#26), first reported as nl-shell#212. Known;
   variants beyond them are in scope.
 - What a command runs later (`eval`'s argument, `source`d files, `python -c`, aliases,
   functions defined elsewhere) is not in the line. The walker reports the command, not

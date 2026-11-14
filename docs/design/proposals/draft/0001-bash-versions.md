@@ -35,15 +35,18 @@ version allows.
 
 ## Design
 
-**A fact holds for a set of versions.** `walk()` gets a parameter naming the bash versions
-the line may run on:
+**A fact holds for a set of versions.** `walk()` gets one parameter describing the bash the
+line may run on: its versions and, optionally, the `shopt` and `set` options the caller knows
+are on or off (question 4):
 
 ```python
-walk(line, bash=BashVersions("5.2"))          # the caller knows its bash
-walk(line)                                     # default: every supported version
+walk(line, bash=Bash("5.2"))                       # the caller knows its version
+walk(line, bash=Bash("5.2", on={"extglob"}))      # ... and that extglob is on
+walk(line)                                          # default: every supported version
 ```
 
-A fact is proven only when it holds for **every** version in the set. The default is the
+An option the caller doesn't mention may be on or off. A fact is proven only when it holds
+for **every** version in the set, with every setting of the options left open. The default is the
 full supported set, so the default stays fail-closed and gives the same results as today.
 A caller that knows its bash, for example from `$BASH_VERSINFO` in the session that will run
 the line, passes that version and gets facts that need not cover the others.
@@ -99,7 +102,8 @@ A grammar pin move (ADR-0006) must pass the differential test on every supported
 ## Security impact
 
 The line is still the untrusted input (threat model §14.2). The new trusted input is the
-caller's statement of which bash will run the line. A caller that names the wrong version
+caller's statement of which bash will run the line, and with which options. A caller that
+names the wrong version or option
 can get facts that don't hold for the bash that actually runs. The default (all versions)
 is fail-closed, and the documentation tells callers to name a version only when they know
 it. The pull request that implements this adds the new input and its mitigation to both
@@ -123,5 +127,6 @@ proven today into the worst case. Such a change is announced in the release note
    bashwalker release whose notes announce it, after the steps under "Adding versions over
    time". The facts a caller gets never change without a bashwalker release. Until a bash
    release is added, a caller running it gets no guarantee (threat model §14.9).
-4. **[OPEN]** Do `shopt` and `set` options a caller enables (for example `extglob`) belong in
-   the same parameter as the version?
+4. **Decided:** `shopt` and `set` options a caller knows (for example `extglob`) belong in
+   the same parameter as the version. They are tied together: the version decides some
+   options' defaults (`patsub_replacement` is on from 5.2).

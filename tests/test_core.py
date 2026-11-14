@@ -95,6 +95,8 @@ UNTRUSTED = {
     "command alias x=y": "alias definition",
     "BASH_ALIASES[bash]='exec <<<x; bash'": "bash runs as code",
     "BASH_CMDS[ls]=/tmp/evil; ls": "bash runs as code",
+    ": \"${PS4:=$X}\"; set -x; :": "bash runs as code",
+    "for PS4 in x; do :; done": "bash runs as code",
     "hash -p /tmp/evil ls; ls": "hash -p",
     "printf -v $\"PS4\" x; set -x; :": "bash runs as code",
     "declare a['$(touch m)0']=1": "subscript with a substitution",
@@ -229,6 +231,11 @@ MODE_UNTRUSTED = [
     "read histchars <<<x",
     "printf -v SHELLOPTS x",
     "printf -vBASH_COMPAT 42",
+    "set -ok; echo a=b c",
+    "set -oH",
+    "for POSIXLY_CORRECT in 1; do :; done\ntime -p type echo",
+    ': "${POSIXLY_CORRECT:=1}"\ntime -p type echo',
+    ": ${BASH_COMPAT=42}",
 ]
 MODE_TRUSTED = [
     "set -euo pipefail; ls",
@@ -270,6 +277,7 @@ UNSEEN_CODE = [
     "while :; do echo a=b; eval x; done",
     "f() { eval \"$1\"; }; f x; echo a=b",
     "$(echo set) -k\necho a=b c",
+    "enable -f ./mode.so mode\nmode\nprintf '<%s>\\n' a=b c",
 ]
 
 

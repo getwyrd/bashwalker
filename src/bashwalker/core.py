@@ -581,9 +581,19 @@ def untrusted_features(tree: tree_sitter.Tree, source: bytes) -> tuple[str, ...]
                     break
         if node.type == "for_statement":  # also `select`, which the grammar parses so
             target = node.child_by_field_name("variable")
-            if target is not None and target.text.decode("utf-8", "replace") in CODE_VARIABLES:
+            name = target.text.decode("utf-8", "replace") if target is not None else ""
+            if name in CODE_VARIABLES:
                 # `for PS4 in '$(id)'; do set -x; :; done` sets PS4 to each value.
                 note("a variable bash runs as code (PS4, PROMPT_COMMAND, …) is set")
+            if name in MODE_VARIABLES:
+                note("a shell option that changes how bash reads the line is set")
+        if node.type == "expansion":
+            # `${PS4:='$(id)'}` and `${POSIXLY_CORRECT:=1}` assign the variable.
+            assigned = _DEFAULT_ASSIGNMENT.match(node.text.decode("utf-8", "replace"))
+            if assigned and assigned.group(1) in CODE_VARIABLES:
+                note("a variable bash runs as code (PS4, PROMPT_COMMAND, …) is set")
+            if assigned and assigned.group(1) in MODE_VARIABLES:
+                note("a shell option that changes how bash reads the line is set")
         if node.type == "expansion" and node.text.endswith(b"@P}"):
             # `${v@P}` expands v's value as a prompt, which runs `$(…)` in it; the value
             # is only known at run time.
@@ -1570,7 +1580,10 @@ SHELL_RUNNERS = ("eval", "source", ".", "fc")  # `fc` re-runs history lines
 CODE_LATER = ("trap", "alias")  # an alias runs its text where it is used
 BUILTIN_PREFIXES = ("command", "builtin")
 # Builtins that take shell code in an option, by the option letters that do.
-CODE_OPTIONS = {"mapfile": "C", "readarray": "C", "complete": "CF", "compgen": "CF", "bind": "x"}
+# `enable -f` loads a shared object into the shell: native code the walker does not see.
+CODE_OPTIONS = {
+    "mapfile": "C", "readarray": "C", "complete": "CF", "compgen": "CF", "bind": "x", "enable": "f"
+}
 
 
 # --- Options that change how bash reads the line -------------------------------------
@@ -1633,7 +1646,7 @@ def _set_changes_reading(args: list[Word]) -> bool:
         for letter in text[1:]:
             if letter == "o":
                 if i >= len(args):
-                    break  # `set -o` alone prints the options
+                    continue  # a bare `-o` prints the options; the other letters still apply
                 name = args[i]
                 i += 1
                 if not name.literal or name.text not in _SET_NAMES_SAFE[sign]:

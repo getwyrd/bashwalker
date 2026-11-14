@@ -160,8 +160,11 @@ inputs that hold control characters in refused lines (`test_refusals_never_quote
   redirect or assignment facts, which only the unit tests cover.
 - **Execution preconditions (§3.2).** The facts assume a bash that does no history expansion
   (non-interactive, or `set +H`) and is not in POSIX mode (`set -o posix`,
-  `POSIXLY_CORRECT`, or started as `sh`), where some forms parse differently (`time -p`); an interactive shell with it on can rewrite `!` words that
-  `walk()` reports as literal. `terminal` stdin is the stdin the caller gave that bash; a
+  `POSIXLY_CORRECT`, or started as `sh`), where some forms parse differently (`time -p`),
+  for the whole run. An interactive shell with history expansion on can rewrite `!` words
+  that `walk()` reports as literal. The walker does not yet make every line that turns one
+  of these modes on itself untrusted; a fix is in progress, tracked privately as SECURITY.md
+  asks. `terminal` stdin is the stdin the caller gave that bash; a
   caller that runs the line with piped stdin treats `terminal` as a pipe.
 - **Bash releases outside 5.1–5.3 are not covered.** Their facts can differ (architecture
   §1.5); a caller whose bash is older or newer gets no guarantee. Bash 5.0 is planned (#29);

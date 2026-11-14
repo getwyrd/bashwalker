@@ -78,7 +78,8 @@ request (draft proposal 0001). Releases older than 5.0 are not supported.
   POSIX mode, and
   `terminal` stdin means the stdin the caller gave that bash (architecture §3.2). A report
   that needs history expansion or POSIX mode on, or that only says `terminal` may be a pipe, is a
-  precondition the caller guarantees, not a broken fact.
+  precondition the caller guarantees, not a broken fact. A line that turns one of these modes
+  on itself is a known gap, already reported privately.
 - Rule 1 lists the grammar disagreements found so far; the differential test checks it
   against bash, `bash -n` and shfmt by sampling generated lines, not exhaustively. A new
   disagreement that gives a wrong fact without being flagged is in scope.

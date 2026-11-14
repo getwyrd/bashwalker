@@ -20,6 +20,9 @@ tags:
   their assignments, redirects and stdin. A wrong fact that looks proven (a hidden
   command, a word marked literal that bash expands, a stdin reported as a literal feed
   that the command does not read in full) lets the caller's policy pass a command it would have blocked.
+  "Bash" means the supported releases, today 5.1, 5.2 and 5.3, which the differential test
+  runs on. A disagreement that shows only with another release (for example 3.2, or a newer
+  release not yet added) is a version-support gap (§14.9), not a broken fact.
   For nl-shell that is a command run without confirmation; for pdca-harness's STOP guard
   a push to a protected branch.
 - **The caller's availability.** `walk()` runs inside the caller's process on every
@@ -153,6 +156,10 @@ inputs that hold control characters in refused lines (`test_refusals_never_quote
   generated lines: command splits and literal words. It finds forms by sampling, so one
   its generator does not produce can still be missing, and it does not compare stdin,
   redirect or assignment facts, which only the unit tests cover.
+- **Bash releases outside 5.1–5.3 are not covered.** Their facts can differ (architecture
+  §1.5); a caller whose bash is older or newer gets no guarantee yet. Draft proposal 0001
+  (#27) designs support for several versions. When it is implemented, the caller's statement
+  of which bash runs the line becomes a trusted input, and this section gains an entry for it.
 - **Known misreads, each with an open issue:** wrong stdin and prefix facts for
   `PATH=… $(true)` (#28) and `coproc` (#26), first reported as nl-shell#212, whose `</dev/stdin` form is fixed. The two
   backtick forms of nl-shell#213 are flagged by Rule 1; other forms of the same kind are

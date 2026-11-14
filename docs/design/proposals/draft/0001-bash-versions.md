@@ -98,7 +98,9 @@ The line is still the untrusted input (threat model §14.2). The new trusted inp
 caller's statement of which bash will run the line. A caller that names the wrong version
 can get facts that don't hold for the bash that actually runs. The default (all versions)
 is fail-closed, and the documentation tells callers to name a version only when they know
-it. §14 gains an entry for this.
+it. The pull request that implements this adds the new input and its mitigation to both
+threat-model copies (§14 and `.oss-scanner/threat_model.md`); today §14.9 records only that
+versions outside 5.1–5.3 are not covered.
 
 ## Backward compatibility
 

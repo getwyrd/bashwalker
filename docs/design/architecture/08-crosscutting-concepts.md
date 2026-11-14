@@ -90,7 +90,8 @@ generates command lines and compares the walker with three oracles:
 For each line bash accepts and the walker trusts, every simple command an oracle sees must
 be among the walker's invocations, and every word the walker calls literal must match. One
 exception is built into the comparison: a `[ … ]` test is a `test_command` node that gives
-no invocation, so oracle commands headed by `[` are not compared. Other accepted differences
+no invocation, so oracle commands headed by `[` are not compared. That is a known gap
+(#30), not a guarantee: the fix gives `[ … ]` an invocation and drops the exception. Other accepted differences
 are listed with a reason in `tests/differential/known.toml`. CI runs
 it on bash 5.1, 5.2 and 5.3.
 

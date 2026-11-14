@@ -162,6 +162,6 @@ inputs that hold control characters in refused lines (`test_refusals_never_quote
   (#27) designs support for several versions. When it is implemented, the caller's statement
   of which bash runs the line becomes a trusted input, and this section gains an entry for it.
 - **Known misreads, each with an open issue:** wrong stdin and prefix facts for
-  `PATH=… $(true)` (#28) and `coproc` (#26), first reported as nl-shell#212, whose `</dev/stdin` form is fixed. The two
+  `PATH=… $(true)` (#28) and `coproc` (#26), first reported as nl-shell#212, whose `</dev/stdin` form is fixed; and no invocation for a `[ … ]` test, so a redefined `[` runs unseen (#30). The two
   backtick forms of nl-shell#213 are flagged by Rule 1; other forms of the same kind are
   for the differential oracle to find.

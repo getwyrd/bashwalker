@@ -45,8 +45,23 @@ walk(line, bash=Bash("5.2", on={"extglob"}))      # ... and that extglob is on
 walk(line)                                          # default: every supported version
 ```
 
-An option the caller doesn't mention may be on or off. A fact is proven only when it holds
-for **every** version in the set, with every setting of the options left open. The default is the
+An option the caller doesn't mention may be on or off, whatever its default: a session can
+have changed it. Only a caller that says the line runs in a fresh shell with the version's
+default options (`Bash("5.2", fresh=True)`) gets the profile's defaults for the options it
+doesn't mention. What the caller declares, and a fresh shell's defaults, describe the shell
+only when the line starts. If anything in the line may change an option, every option is
+unknown for the **whole** line, not only after that point: a function or loop can run code
+written before the change after it. What may change an option includes `shopt`, `set`,
+`enable`, `eval`, `source`, a function call or definition, a non-literal command word, and a
+write by any means (an assignment, `read`, `printf -v`, `declare`) to a variable that changes
+options or the shell's mode, such as `BASH_COMPAT`, `POSIXLY_CORRECT`, `SHELLOPTS` or
+`BASHOPTS`. The implementation fixes the exact list, each entry with a test.
+
+bashwalker sees only the line. A declaration (or `fresh=True`) is the caller vouching that
+nothing outside the line changes an option while it runs: a shell with a `DEBUG`, `ERR` or
+`RETURN` trap, or anything else that runs code between the line's commands, must not
+declare options. A fact is proven only when it holds for
+**every** version in the set, with every setting of the options left open. The default is the
 full supported set, so the default stays fail-closed and gives the same results as today.
 A caller that knows its bash, for example from `$BASH_VERSINFO` in the session that will run
 the line, passes that version and gets facts that need not cover the others.
@@ -55,7 +70,8 @@ the line, passes that version and gets facts that need not cover the others.
 release, what the walker needs to know:
 - syntax added or removed (`${ cmd; }` from 5.3);
 - integer variables (`SRANDOM` from 5.1);
-- default `shopt` settings that change expansion (`patsub_replacement` from 5.2);
+- default `shopt` settings that change expansion (`patsub_replacement` from 5.2), used only
+  for a caller that declares a fresh shell;
 - builtin options the walker reads (`wait -p` from 5.1).
 
 The rules consult the profile instead of hard-coding one bash. A difference that the
@@ -104,7 +120,8 @@ A grammar pin move (ADR-0006) must pass the differential test on every supported
 The line is still the untrusted input (threat model §14.2). The new trusted input is the
 caller's statement of which bash will run the line, and with which options. A caller that
 names the wrong version or option
-can get facts that don't hold for the bash that actually runs. The default (all versions)
+can get facts that don't hold for the bash that actually runs, and so can a caller that
+declares options for a shell with traps that may change them. The default (all versions)
 is fail-closed, and the documentation tells callers to name a version only when they know
 it. The pull request that implements this adds the new input and its mitigation to both
 threat-model copies (§14 and `.oss-scanner/threat_model.md`); today §14.9 records only that
@@ -128,5 +145,5 @@ proven today into the worst case. Such a change is announced in the release note
    time". The facts a caller gets never change without a bashwalker release. Until a bash
    release is added, a caller running it gets no guarantee (threat model §14.9).
 4. **Decided:** `shopt` and `set` options a caller knows (for example `extglob`) belong in
-   the same parameter as the version. They are tied together: the version decides some
-   options' defaults (`patsub_replacement` is on from 5.2).
+   the same parameter as the version. They are tied together: the version decides which
+   options exist and their defaults in a fresh shell (`patsub_replacement` is on from 5.2).

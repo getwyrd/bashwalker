@@ -86,6 +86,9 @@ request (draft proposal 0001). Releases older than 5.0 are not supported.
   hidden command reached through arithmetic in one line otherwise is in scope.
 - Wrong stdin and prefix facts for `PATH=… $(true)` (#28) and `coproc` (#26), first reported as nl-shell#212. Known;
   variants beyond them are in scope.
+- A `[ … ]` test gives no `Invocation`, so a `[` redefined as a function or replaced on
+  `PATH` runs unseen (#30). Known; other simple commands missing from `invocations` are in
+  scope.
 - What a command runs later (`eval`'s argument, `source`d files, `python -c`, aliases,
   functions defined elsewhere) is not in the line. The walker reports the command, not
   what it runs.

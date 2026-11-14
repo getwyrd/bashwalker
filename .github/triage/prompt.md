@@ -15,7 +15,7 @@ Severity and reach are only used for a `bug`. For the other types, still fill th
 
 ## Severity: how bad it is when it happens
 
-Severity applies to the supported bash versions (5.1 to 5.3). A disagreement that only shows with another bash version (5.0 until it is added, or a newer release not yet supported) is an `enhancement` for version support, not a security bug, and does not set the `security` flag.
+Severity applies to the supported bash versions (5.1 to 5.3 at the tested patch levels 5.1.16, 5.2.37 and 5.3.20). A disagreement that only shows with another bash version (5.0 until it is added, a newer release not yet supported, or another patch level of 5.1 to 5.3) is an `enhancement` for version support, not a security bug, and does not set the `security` flag.
 
 - `critical`: in a tree walk() reports as trusted, a command bash runs is missing from the invocations, or a word bash expands is marked literal. Also a secret that leaks.
 - `major`: another wrong fact that looks proven in a trusted tree (a stdin, a redirect's descriptor or target, an assignment's role), a grammar disagreement that is not flagged, unbounded time or memory, a refusal or other diagnostic that quotes the input, a crash, or ordinary command lines refused.

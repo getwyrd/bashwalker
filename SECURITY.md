@@ -68,8 +68,8 @@ are not in themselves security issues.
 
 **Out of scope:** the documented residuals in
 [§14.8](docs/design/architecture/14-threat-model.md#148-residual-and-accepted-risks):
-- a disagreement with a bash version outside the supported ones (5.0 until #29 adds it, or a
-  newer release not yet added): open a normal issue. Releases older than 5.0 are not
+- a disagreement with a bash version outside the supported ones (5.0 until #29 adds it, a
+  newer release not yet added, or a patch level of 5.1–5.3 other than the tested ones): open a normal issue. Releases older than 5.0 are not
   supported;
 - what `eval`, `source`, a script or a non-literal command word runs later;
 - run-time shell state.

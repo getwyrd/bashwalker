@@ -46,6 +46,11 @@ walk(line, bash=Bash("5.2", on={"extglob"}, off={"nocaseglob"}))  # ... and some
 walk(line)                                                      # default: every supported version
 ```
 
+A version names a release at the patch level CI tests (`"5.2"` means 5.2.37, the level
+`scripts/build_bash.py` builds); the profile records it, and it moves only with a full test
+run. A caller on another patch level of a supported release is outside the guarantee, as
+SECURITY.md says today.
+
 An option the caller doesn't mention may be on or off, whatever its default: a session can
 have changed it. Only a caller that says the line runs in a fresh shell with the version's
 default options (`Bash("5.2", fresh=True)`) gets the profile's defaults for the options it

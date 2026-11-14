@@ -130,7 +130,9 @@ inputs that hold control characters in refused lines (`test_refusals_never_quote
   `CODE_LATER`) but not what it will run. A caller that must know treats these commands
   as opaque.
 - **tree-sitter itself.** A memory-safety bug in tree-sitter or the compiled grammar is
-  out of this project's reach; the exact pin limits exposure to reviewed releases.
+  fixed upstream; the exact pin limits exposure to reviewed releases. One that `walk()`
+  reaches is still reported to this project (SECURITY.md), which moves the pin and
+  publishes an advisory.
 - **Run-time state.** The walker sees text, not the shell it will run in: the cwd,
   `HOME`, the current branch, defined functions and aliases are the caller's to check. For
   arithmetic this includes an integer attribute an earlier command gave a variable (every

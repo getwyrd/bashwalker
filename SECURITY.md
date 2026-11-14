@@ -1,7 +1,7 @@
 # Security policy
 
 bashwalker is early software (0.1.x). Its API isn't stable yet, but its one security
-promise holds from the start: a fact `walk()` reports as proven holds for bash, in the
+promise holds from 0.1.1 on: a fact `walk()` reports as proven holds for bash, in the
 supported versions (today 5.1–5.3; see architecture §1.5). The known exceptions are listed
 in [§14.9](docs/design/architecture/14-threat-model.md#149-gaps-and-their-disposition),
 each with an open issue (today wrong stdin and prefix facts for `PATH=… $(true)` (#28) and `coproc`
@@ -55,7 +55,9 @@ are not in themselves security issues.
   word marked literal that bash expands, or a stdin reported as `terminal`, `pipe` or
   `literal` that is something else. Hidden commands, including commands reached through
   arithmetic, are the most serious case.
-- A crash, a hang, or time or memory far beyond `Limits` on some input.
+- A crash, a hang, or time or memory far beyond `Limits` on some input. A memory-safety bug
+  in tree-sitter or the pinned grammar that `walk()` reaches is in scope too: report it
+  upstream and to us, so we can move the pin and publish an advisory.
 - A `ParseRefused` message, or other error or diagnostic output, that carries the input.
   The facts themselves (word text, assignment values, redirect targets) carry the input on
   purpose.
@@ -68,8 +70,7 @@ are not in themselves security issues.
   newer release not yet added): open a normal issue. Releases older than 5.0 are not
   supported;
 - what `eval`, `source`, a script or a non-literal command word runs later;
-- run-time shell state;
-- memory-safety bugs inside tree-sitter itself (report those upstream).
+- run-time shell state.
 
 A safe line reported as untrusted is a precision bug, not a vulnerability: please open a
 normal issue.

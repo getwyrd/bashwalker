@@ -1,7 +1,7 @@
 # Security policy
 
 bashwalker is early software (0.1.x). Its API isn't stable yet, but its one security
-promise holds from 0.1.1 on: a fact `walk()` reports as proven holds for bash, in the
+promise holds from 0.1.2 on: a fact `walk()` reports as proven holds for bash, in the
 supported versions (today 5.1–5.3 at the patch levels CI tests: 5.1.16, 5.2.37 and 5.3.20;
 see architecture §1.5). Other patch levels of those releases are expected to agree but are
 not tested; a disagreement on one is in scope. The facts also assume, for the whole run, history expansion off (non-interactive, or `set +H`), POSIX mode off (`set -o posix`, `POSIXLY_CORRECT`, started as `sh`) and `interactive_comments` on, and `terminal` stdin means the stdin the caller gave bash
@@ -14,7 +14,8 @@ with their integrations in progress. We want to hear about anything that breaks 
 promise, including flaws in the design itself.
 
 Versions before 0.1.1 can report a line as trusted while bash runs a command hidden in
-arithmetic. Use 0.1.1 or later.
+arithmetic. Versions before 0.1.2 can report trusted facts for a line that changes how bash
+reads its later commands (GHSA-hc72-48v8-pvg7). Use 0.1.2 or later.
 
 The threat model (assets, trust boundaries, adversaries and the attacks the project must
 withstand) is maintained with the design documentation: see

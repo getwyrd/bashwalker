@@ -581,9 +581,19 @@ def untrusted_features(tree: tree_sitter.Tree, source: bytes) -> tuple[str, ...]
                     break
         if node.type == "for_statement":  # also `select`, which the grammar parses so
             target = node.child_by_field_name("variable")
-            if target is not None and target.text.decode("utf-8", "replace") in CODE_VARIABLES:
+            name = target.text.decode("utf-8", "replace") if target is not None else ""
+            if name in CODE_VARIABLES:
                 # `for PS4 in '$(id)'; do set -x; :; done` sets PS4 to each value.
                 note("a variable bash runs as code (PS4, PROMPT_COMMAND, …) is set")
+            if name in MODE_VARIABLES:
+                note("a shell option that changes how bash reads the line is set")
+        if node.type == "expansion":
+            # `${PS4:='$(id)'}` and `${POSIXLY_CORRECT:=1}` assign the variable.
+            assigned = _DEFAULT_ASSIGNMENT.match(node.text.decode("utf-8", "replace"))
+            if assigned and assigned.group(1) in CODE_VARIABLES:
+                note("a variable bash runs as code (PS4, PROMPT_COMMAND, …) is set")
+            if assigned and assigned.group(1) in MODE_VARIABLES:
+                note("a shell option that changes how bash reads the line is set")
         if node.type == "expansion" and node.text.endswith(b"@P}"):
             # `${v@P}` expands v's value as a prompt, which runs `$(…)` in it; the value
             # is only known at run time.
@@ -647,6 +657,9 @@ class Walker:
         # them under the redirect, bash passes them to the command. Keyed by the
         # redirect's id until the simple command that owns the redirect takes them.
         self.operands: dict[int, list[tuple[int, int]]] = {}
+        # Per invocation, in the same order: its command node's byte span and whether a
+        # loop or function body around it may run it again after later commands.
+        self.spans: list[tuple[int, int, bool]] = []
         # Command and process substitutions walked so far (each may read stdin).
         self.substitutions = 0
 
@@ -1050,6 +1063,7 @@ def _simple(walker: Walker, node, ctx: Ctx, depth: int, bound: tuple = ()) -> No
             time_reserved=_time_reserved(node),
         )
     )
+    walker.spans.append((node.start_byte, node.end_byte, _may_rerun(node)))
 
 
 _DECLARED = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)(\[[^\]]*\])?\+?=(.*)", re.S)
@@ -1408,6 +1422,25 @@ def walk(source: str, limits: Limits = DEFAULT_LIMITS) -> Walk:
         # however they are set (`printf -v PS4`, `read PS4`, `declare`); the walker sees
         # no command for it.
         walker.note_untrusted("a variable bash runs as code (PS4, PROMPT_COMMAND, …) is set")
+    if (
+        any(a.name in MODE_VARIABLES for a in layer.assignments)
+        or any(_NAMES_MODE_VARIABLE.match(w.text) for w in layer.words)
+        # `{POSIXLY_CORRECT}>/dev/null` assigns the descriptor number to the name.
+        or any(
+            r.descriptor is not None
+            and _NAMES_MODE_VARIABLE.match(r.descriptor.strip("{}"))
+            for r in layer.redirects
+        )
+        or any(_changes_line_reading(i) for i in layer.invocations)
+    ):
+        # History expansion, POSIX mode, `keyword` and `interactive_comments` change how
+        # bash reads and runs the commands after the one that sets them (`set -H` on one
+        # line, `!!` on the next); the facts assume them at their defaults (§3.2).
+        walker.note_untrusted("a shell option that changes how bash reads the line is set")
+    elif _unseen_code_runs_first(layer.invocations, walker.spans):
+        # Code the walker does not see (`eval 'set -o posix'`, a trap, a sourced file, a
+        # command word it cannot read) may set one of those options before the others run.
+        walker.note_untrusted("shell code the walker does not see may change how bash reads the line")
     if walker.operands:
         # Words after a redirect target with no simple command to take them
         # (`{ cat; } <a b`, a syntax error in bash): the tree is not bash's.
@@ -1435,6 +1468,13 @@ CODE_VARIABLES = (
     "FCEDIT",  # `fc` runs it as the editor
     "BASH_ALIASES",  # defines aliases, like `alias`
     "BASH_CMDS",  # maps a command name to the file bash runs for it, like `hash -p`
+)
+# Variables whose value changes how bash reads or runs the line: POSIX mode, the
+# compatibility level, the `set -o` / `shopt` options themselves, and the history
+# expansion characters.
+MODE_VARIABLES = ("POSIXLY_CORRECT", "BASH_COMPAT", "SHELLOPTS", "BASHOPTS", "histchars")
+_NAMES_MODE_VARIABLE = re.compile(
+    r"(?:-[A-Za-z]*)?(?:" + "|".join(MODE_VARIABLES) + r")(?:\[.*\])?(?:\+?=.*)?$", re.S
 )
 _NAMES_CODE_VARIABLE = re.compile(
     # Also attached to any options (`printf -vPS4`, `read -aPS4`).
@@ -1546,7 +1586,166 @@ SHELL_RUNNERS = ("eval", "source", ".", "fc")  # `fc` re-runs history lines
 CODE_LATER = ("trap", "alias")  # an alias runs its text where it is used
 BUILTIN_PREFIXES = ("command", "builtin")
 # Builtins that take shell code in an option, by the option letters that do.
-CODE_OPTIONS = {"mapfile": "C", "readarray": "C", "complete": "CF", "compgen": "CF", "bind": "x"}
+# `enable -f` loads a shared object into the shell: native code the walker does not see.
+CODE_OPTIONS = {
+    "mapfile": "C", "readarray": "C", "complete": "CF", "compgen": "CF", "bind": "x", "enable": "f",
+    "jobs": "x",  # `jobs -x cmd` runs cmd in the current shell
+}
+
+
+# --- Options that change how bash reads the line -------------------------------------
+#
+# The facts assume history expansion off, POSIX mode off, `keyword` off and
+# `interactive_comments` on (architecture §3.2). A line that changes one of them makes
+# bash read or run its later commands differently (`set -H` then `!!` on the next line;
+# `set -o posix` then `time -p cmd`; `set -k` then `echo a=b`). Only the options below are
+# trusted, by direction; any other, or one the walker cannot read, makes the tree untrusted.
+_SET_LETTERS_SAFE = {"-": frozenset("abefhmnptuvxBCEPT"), "+": frozenset("abefhmnptuvxBCEPTHk")}
+_SET_NAMES = frozenset(
+    ("allexport", "braceexpand", "emacs", "errexit", "errtrace", "functrace", "hashall",
+     "ignoreeof", "monitor", "noclobber", "noexec", "noglob", "nolog", "notify", "nounset",
+     "onecmd", "physical", "pipefail", "privileged", "verbose", "vi", "xtrace")
+)
+_SET_NAMES_SAFE = {
+    "-": _SET_NAMES | {"interactive-comments"},
+    "+": _SET_NAMES | {"histexpand", "history", "keyword", "posix"},
+}
+_SHOPT_NAMES = frozenset(
+    ("autocd", "cdable_vars", "cdspell", "checkhash", "checkjobs", "checkwinsize", "cmdhist",
+     "direxpand", "dirspell", "dotglob", "execfail", "failglob", "force_fignore",
+     "globasciiranges", "globskipdots", "globstar", "gnu_errfmt", "histappend", "histreedit",
+     "histverify", "hostcomplete", "huponexit", "inherit_errexit", "lithist",
+     "localvar_inherit", "localvar_unset", "mailwarn", "no_empty_cmd_completion",
+     "nocaseglob", "nocasematch", "noexpand_translation", "nullglob", "progcomp",
+     "progcomp_alias", "shift_verbose", "sourcepath", "varredir_close", "xpg_echo")
+)
+_SHOPT_NAMES_SAFE = {
+    "s": _SHOPT_NAMES | {"interactive_comments"},
+    "u": _SHOPT_NAMES | {"extglob", "expand_aliases", "extdebug", "extquote", "lastpipe",
+                         "promptvars", "patsub_replacement", "assoc_expand_once"},
+}
+
+
+def _changes_line_reading(invocation: Invocation) -> bool:
+    """Whether ``invocation`` is ``set`` or ``shopt`` (``command`` / ``builtin`` in front
+    looked through) setting an option outside the trusted lists above."""
+    head = command_head(invocation)
+    # The decoded name counts even when it is not literal: `$'set' -H` runs `set`. Any
+    # other unreadable command word is unseen code (`_runs_unseen_code`).
+    if head is None or head.text not in ("set", "shopt"):
+        return False
+    words = list(invocation.words)
+    args = words[words.index(head) + 1 :]
+    if head.text == "set":
+        return _set_changes_reading(args)
+    return _shopt_changes_reading(args)
+
+
+def _set_changes_reading(args: list[Word]) -> bool:
+    i = 0
+    while i < len(args):
+        word = args[i]
+        if not word.literal:
+            return True
+        text = word.text
+        if text == "+":
+            i += 1
+            continue  # bash skips a lone `+` and goes on reading options
+        if text in ("--", "-") or len(text) < 2 or text[0] not in "-+":
+            return False  # the rest are positional parameters
+        sign = text[0]
+        i += 1
+        for letter in text[1:]:
+            if letter == "o":
+                if i >= len(args):
+                    continue  # a bare `-o` prints the options; the other letters still apply
+                name = args[i]
+                i += 1
+                if not name.literal or name.text not in _SET_NAMES_SAFE[sign]:
+                    return True
+            elif letter not in _SET_LETTERS_SAFE[sign]:
+                return True
+    return False
+
+
+def _shopt_changes_reading(args: list[Word]) -> bool:
+    flags: set[str] = set()
+    i = 0
+    while i < len(args):
+        word = args[i]
+        if not word.literal:
+            return True
+        if word.text == "--":
+            i += 1
+            break
+        if len(word.text) < 2 or word.text[0] != "-":
+            break
+        if any(c not in "psuoq" for c in word.text[1:]):
+            return True
+        flags.update(word.text[1:])
+        i += 1
+    if "s" not in flags and "u" not in flags:
+        return False  # it prints or queries
+    if {"s", "u"} <= flags:
+        return True
+    direction = "s" if "s" in flags else "u"
+    for name in args[i:]:
+        if not name.literal:
+            return True
+        if "o" in flags:
+            if name.text not in _SET_NAMES_SAFE["-" if direction == "s" else "+"]:
+                return True
+        elif name.text not in _SHOPT_NAMES_SAFE[direction]:
+            return True
+    return False
+
+
+_RERUNS = ("while_statement", "for_statement", "c_style_for_statement", "function_definition")
+
+
+def _may_rerun(node) -> bool:
+    """Whether a loop or function body holds ``node``, so it may run again after commands
+    written later."""
+    parent = node.parent
+    while parent is not None:
+        if parent.type in _RERUNS:
+            return True
+        parent = parent.parent
+    return False
+
+
+def _unseen_code_runs_first(
+    invocations: list[Invocation], spans: list[tuple[int, int, bool]]
+) -> bool:
+    """Whether code the walker does not see may run before another command: an
+    invocation that runs such code and that a loop or function may rerun, or that another
+    invocation starts after."""
+    for invocation, (start, end, rerun) in zip(invocations, spans, strict=True):
+        if not _runs_unseen_code(invocation):
+            continue
+        if rerun or any(other_start >= end for other_start, _, _ in spans):
+            return True
+    return False
+
+
+def _runs_unseen_code(invocation: Invocation) -> bool:
+    """Whether ``invocation`` runs shell code the walker does not see: ``eval`` /
+    ``source`` / ``.`` / ``fc``, ``trap`` / ``alias``, a builtin with a code option, or a
+    command word the walker cannot read."""
+    head = command_head(invocation)
+    if head is None:
+        return False
+    if not head.literal or head.text in SHELL_RUNNERS or head.text in CODE_LATER:
+        return True
+    if head.text in CODE_OPTIONS:
+        letters = CODE_OPTIONS[head.text]
+        words = list(invocation.words)
+        for word in words[words.index(head) + 1 :]:
+            if not word.literal:
+                return True
+            if word.text.startswith("-") and any(c in word.text[1:] for c in letters):
+                return True
+    return False
 
 
 def may_rewire_stdin(invocation: Invocation) -> bool:
@@ -1558,20 +1757,10 @@ def may_rewire_stdin(invocation: Invocation) -> bool:
     head = command_head(invocation)
     if head is None:
         return False  # no command word: a redirect alone applies to nothing
-    if not head.literal:
+    # `mapfile -C 'code'` runs code now, `complete -C`/`bind -x` on a later key or
+    # completion: shell code the walker does not see, as with `eval` and `trap`.
+    if _runs_unseen_code(invocation):
         return True
-    if head.text in SHELL_RUNNERS or head.text in CODE_LATER:
-        return True
-    if head.text in CODE_OPTIONS:
-        # `mapfile -C 'code'` runs code now, `complete -C`/`bind -x` on a later key or
-        # completion: shell code the walker does not see, as with `eval` and `trap`.
-        letters = CODE_OPTIONS[head.text]
-        words = list(invocation.words)
-        for word in words[words.index(head) + 1 :]:
-            if not word.literal:
-                return True  # an option the walker cannot read
-            if word.text.startswith("-") and any(c in word.text[1:] for c in letters):
-                return True
     return head.text == "exec" and bool(invocation.redirects)
 
 

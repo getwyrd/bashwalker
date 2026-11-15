@@ -56,7 +56,7 @@ as the worst case for its rules. For example, an interactive shell asks for conf
   - `exec` with a redirect;
   - `eval`, `source`, `.`, `fc`, `trap` and `alias`;
   - a builtin with a code option (`mapfile`/`readarray -C`, `complete`/`compgen -C`/`-F`,
-    `bind -x`);
+    `bind -x`, `enable -f`, `jobs -x`);
   - a non-literal command word.
 
   Every invocation's stdin then becomes `unknown`, because any of them may run after it.

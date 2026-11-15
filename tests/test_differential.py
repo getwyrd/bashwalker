@@ -187,6 +187,39 @@ def test_escape_is_detected():
         oracle.bash_reprint(":; }; f() { :;")
 
 
+# Lines that change how bash reads or runs the commands after them
+# (GHSA-hc72-48v8-pvg7), with the output that shows the change in this bash, and the
+# output bash gives without the option line. The walker must report each as untrusted.
+MODE_PROBES = [
+    # (line, flags, with the change, without it)
+    ("set -o history\nset -H\necho hi\necho !!", [], "hi\necho hi\n", "hi\n!!\n"),
+    ("set -o posix\ntime -p echo x", [], "EXTERNAL -p echo x\n", "x\n"),
+    ("set -k\necho a=b c", [], "c\n", "a=b c\n"),
+    ("eval 'set -k'\necho a=b c", [], "c\n", "a=b c\n"),
+    ("shopt -u interactive_comments\necho a #b", ["-i"], "a #b\n", "a\n"),
+]
+
+
+@pytest.mark.parametrize("line,flags,changed,plain", MODE_PROBES)
+def test_option_changes_are_real_and_untrusted(tmp_path, line, flags, changed, plain):
+    import subprocess
+
+    fake = tmp_path / "time"  # an external `time` that shows when POSIX mode picks it
+    fake.write_text('#!/bin/sh\necho EXTERNAL "$@"\n')
+    fake.chmod(0o755)
+    env = {"PATH": f"{tmp_path}:{os.environ['PATH']}", "HOME": str(tmp_path)}
+
+    def run(text: str) -> str:
+        return subprocess.run(
+            ["bash", "--norc", "--noprofile", *flags, "-c", text], env=env,
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
+        ).stdout
+
+    assert run(line) == changed
+    assert run(line.split("\n", 1)[1]) == plain
+    assert bashwalker.walk(line).untrusted, line
+
+
 def test_generated_lines_agree_with_the_oracles():
     failures = {}
     for text in generated():

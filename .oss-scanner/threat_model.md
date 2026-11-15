@@ -46,6 +46,10 @@ PR number from the payload and posts a fixed comment. A change that adds an
   (`Walk.untrusted`, a non-literal word, `unknown` stdin) or raises `ParseRefused`.
 - **Grammar disagreements are flagged.** A line that tree-sitter-bash reads differently
   from bash gives a non-empty `Walk.untrusted`, never a clean tree.
+- **Options that change reading are flagged.** A line that sets history expansion, POSIX
+  mode, `keyword` or turns off `interactive_comments` (by `set`, `shopt` or a mode variable
+  such as `POSIXLY_CORRECT`), or runs unseen code (`eval`, `source`, a trap) before another
+  command, gives a non-empty `Walk.untrusted` (ADR-0010).
 - **Bounded work.** Input over the size cap is refused before it is parsed; the walk has a
   node budget and a depth limit.
 
@@ -76,8 +80,11 @@ request (draft proposal 0001). Releases older than 5.0 are not supported.
 
 - The facts assume, for the whole run, history expansion off (non-interactive, or `set +H`), POSIX mode off (`set -o posix`, `POSIXLY_CORRECT`, started as `sh`) and `interactive_comments` on, and `terminal` stdin means the stdin the caller gave that bash (architecture §3.2). A report
   that needs one of these settings changed, or that only says `terminal` may be a pipe, is a
-  precondition the caller guarantees, not a broken fact. A line that turns one of these modes
-  on itself is a known gap, already reported privately.
+  precondition the caller guarantees, not a broken fact. A line that changes one of these
+  settings itself makes the tree untrusted from 0.1.2 (ADR-0010, GHSA-hc72-48v8-pvg7); a way
+  past that rule is in scope, except through code the walker does not see that ends the line
+  (`source`, `eval`, an unreadable command word), which is the caller's when it runs several
+  lines in one shell.
 - Rule 1 lists the grammar disagreements found so far; the differential test checks it
   against bash, `bash -n` and shfmt by sampling generated lines, not exhaustively. A new
   disagreement that gives a wrong fact without being flagged is in scope.

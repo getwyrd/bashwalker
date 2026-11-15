@@ -28,7 +28,7 @@ reason.
 
 ## Status
 
-Early: 0.1.1, not yet on PyPI.
+Early: 0.1.2, not yet on PyPI.
 
 ## Documentation
 

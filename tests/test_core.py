@@ -95,6 +95,8 @@ UNTRUSTED = {
     "command alias x=y": "alias definition",
     "BASH_ALIASES[bash]='exec <<<x; bash'": "bash runs as code",
     "BASH_CMDS[ls]=/tmp/evil; ls": "bash runs as code",
+    ": \"${PS4:=$X}\"; set -x; :": "bash runs as code",
+    "for PS4 in x; do :; done": "bash runs as code",
     "hash -p /tmp/evil ls; ls": "hash -p",
     "printf -v $\"PS4\" x; set -x; :": "bash runs as code",
     "declare a['$(touch m)0']=1": "subscript with a substitution",
@@ -192,6 +194,113 @@ def test_rule1_quoted_text_is_trusted():
         "x=$HOME; y=\"$x/b\"; z=\"${a[0]}$1$@$?\"",
     ):
         assert bashwalker.walk(command).untrusted == (), command
+
+
+# Options that change how bash reads or runs the line (GHSA-hc72-48v8-pvg7): only the
+# trusted ones, by direction, keep the tree trusted.
+MODE_UNTRUSTED = [
+    "set -o history\nset -H\necho hi\necho !!",
+    "set -o posix\ntime -p type echo",
+    "set -k; echo a=b c",
+    "set -o keyword",
+    "set -H",
+    "set -o histexpand",
+    "set -euo posix",
+    "set -eo pipefail -o posix",
+    "set +o interactive-comments",
+    "set -o $opt",
+    "set $opts",
+    "set -Q",
+    "command set -o posix",
+    "builtin set -H",
+    "f() { set -o posix; }",
+    "echo $(set -H)",
+    "shopt -u interactive_comments",
+    "shopt -s extglob",
+    "shopt -s compat44",
+    "shopt -so posix",
+    "shopt -s -o history",
+    "shopt -uo interactive-comments",
+    "shopt -s nullglob $o",
+    "shopt -su nullglob",
+    "shopt -x nullglob",
+    "POSIXLY_CORRECT=1",
+    "POSIXLY_CORRECT=1 ls",
+    "export BASH_COMPAT=42",
+    "declare POSIXLY_CORRECT=y",
+    "read histchars <<<x",
+    "printf -v SHELLOPTS x",
+    "printf -vBASH_COMPAT 42",
+    "set -ok; echo a=b c",
+    "set -oH",
+    "for POSIXLY_CORRECT in 1; do :; done\ntime -p type echo",
+    ': "${POSIXLY_CORRECT:=1}"\ntime -p type echo',
+    ": ${BASH_COMPAT=42}",
+    "$'set' -H",
+    "$'shopt' -s extglob",
+    "set + -k; command printf '<%s>\\n' a=b c",
+    "set + + -o posix",
+    ": {POSIXLY_CORRECT}>/dev/null\ntime -p type echo",
+]
+MODE_TRUSTED = [
+    "set -euo pipefail; ls",
+    "set -e; set -u; set -x; set +x",
+    "set -o errexit -o nounset -o pipefail",
+    "set +H; set +o posix; set +k; set +o history",
+    "set -o interactive-comments",
+    "set -- -H -o posix",
+    "set - -k",
+    "set a -H",
+    "set -o",
+    "set +o",
+    "set",
+    "shopt -s nullglob globstar; ls",
+    "shopt -u extglob expand_aliases",
+    "shopt -s interactive_comments",
+    "shopt -p",
+    "shopt -q extglob",
+    "shopt -po posix",
+    "shopt -so pipefail",
+    "shopt -uo posix",
+    "echo \"$POSIXLY_CORRECT\" $SHELLOPTS",
+    "eval x",
+    "source venv/bin/activate",
+    # Unseen code with nothing after it: its substitutions run before it.
+    "eval \"$(ssh-agent)\"",
+    "ls; cd x && source venv/bin/activate",
+    "$(echo rm) -rf ~",
+    "\"$EDITOR\" \"$(git rev-parse --show-toplevel)/README.md\"",
+]
+UNSEEN_CODE = [
+    "eval 'set -o posix'\ntime -p type echo",
+    "eval \"$x\"; ls",
+    "source x; ls",
+    ". ./env.sh && make",
+    "trap 'set -H' DEBUG\necho !!",
+    "c=set; $c -o posix\ntime -p type echo",
+    "mapfile -C 'set -k' -c 1 a <f; echo a=b",
+    "while :; do echo a=b; eval x; done",
+    "f() { eval \"$1\"; }; f x; echo a=b",
+    "$(echo set) -k\necho a=b c",
+    "enable -f ./mode.so mode\nmode\nprintf '<%s>\\n' a=b c",    "jobs -x set -k; printf '<%s>\\n' a=b c",
+]
+
+
+@pytest.mark.parametrize("command", MODE_UNTRUSTED)
+def test_rule1_options_that_change_reading_are_untrusted(command):
+    found = bashwalker.walk(command).untrusted
+    assert any("changes how bash reads" in f for f in found), (command, found)
+
+
+@pytest.mark.parametrize("command", MODE_TRUSTED)
+def test_rule1_harmless_options_stay_trusted(command):
+    assert bashwalker.walk(command).untrusted == (), command
+
+
+@pytest.mark.parametrize("command", UNSEEN_CODE)
+def test_rule1_unseen_code_before_other_commands_is_untrusted(command):
+    found = bashwalker.walk(command).untrusted
+    assert any("does not see" in f or "changes how bash reads" in f for f in found), (command, found)
 
 
 def test_rule1_untrusted_tree_proves_no_stdin():

@@ -2044,6 +2044,9 @@ def _display_only(words: list[tuple[str, bool]]) -> bool:
 
 _DESTINATION_OPTIONS = {"read": "a", "printf": "v", "wait": "p", "mapfile": "", "readarray": "", "getopts": ""}
 _DESTINATION_OPERANDS = {"read": "all", "printf": None, "wait": None, "mapfile": 0, "readarray": 0, "getopts": 1}
+# A `%n` conversion in a printf format writes the count printed so far to the variable
+# its argument names (`printf %n "$v"`); flags and length modifiers may come between.
+_PRINTF_COUNT = re.compile(r"%[^a-zA-Z%]*[hlLqjzt]*n")
 _DATA_OPTIONS = {"read": "dinNptu", "printf": "", "wait": "", "mapfile": "dnOsuCc", "readarray": "dnOsuCc", "getopts": ""}
 
 
@@ -2092,6 +2095,12 @@ def _destinations(head: str, words: list[tuple[str, bool]]) -> tuple[list[str], 
         i += 1
     where = _DESTINATION_OPERANDS[head]
     picked = operands if where == "all" else (operands[where : where + 1] if where is not None else [])
+    if head == "printf" and len(operands) > 1:
+        fmt, fmt_literal = operands[0]
+        if not fmt_literal:
+            return names, True  # `printf "$f" "$v"`: the format may hold `%n`
+        if _PRINTF_COUNT.search(fmt.replace("%%", "")):
+            picked = picked + operands[1:]  # `%n` names a variable in any argument
     for text, literal in picked:
         if not literal:
             return names, True

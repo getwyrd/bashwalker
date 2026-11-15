@@ -591,6 +591,8 @@ def untrusted_features(tree: tree_sitter.Tree, source: bytes) -> tuple[str, ...]
                 note("a variable bash runs as code (PS4, PROMPT_COMMAND, …) is set")
             if name in MODE_VARIABLES:
                 note("a shell option that changes how bash reads the line is set")
+            if name in FD_VARIABLES:
+                note("BASH_XTRACEFD, which can close the shell's stdin, is set")
         if node.type == "expansion":
             # `${PS4:='$(id)'}` and `${POSIXLY_CORRECT:=1}` assign the variable.
             assigned = _DEFAULT_ASSIGNMENT.match(node.text.decode("utf-8", "replace"))
@@ -598,6 +600,8 @@ def untrusted_features(tree: tree_sitter.Tree, source: bytes) -> tuple[str, ...]
                 note("a variable bash runs as code (PS4, PROMPT_COMMAND, …) is set")
             if assigned and assigned.group(1) in MODE_VARIABLES:
                 note("a shell option that changes how bash reads the line is set")
+            if assigned and assigned.group(1) in FD_VARIABLES:
+                note("BASH_XTRACEFD, which can close the shell's stdin, is set")
         if node.type == "expansion" and node.text.endswith(b"@P}"):
             # `${v@P}` expands v's value as a prompt, which runs `$(…)` in it; the value
             # is only known at run time.
@@ -1445,6 +1449,18 @@ def walk(source: str, limits: Limits = DEFAULT_LIMITS) -> Walk:
         # Code the walker does not see (`eval 'set -o posix'`, a trap, a sourced file, a
         # command word it cannot read) may set one of those options before the others run.
         walker.note_untrusted("shell code the walker does not see may change how bash reads the line")
+    if (
+        any(a.name in FD_VARIABLES for a in layer.assignments)
+        or any(_NAMES_FD_VARIABLE.match(w.text) for w in layer.words)
+        or any(
+            r.descriptor is not None and _NAMES_FD_VARIABLE.match(r.descriptor.strip("{}"))
+            for r in layer.redirects
+        )
+    ):
+        # Any write or `unset` (`unset BASH_XTRACEFD`, `read BASH_XTRACEFD`,
+        # `{BASH_XTRACEFD}>f`) may close a descriptor, stdin included, that the facts
+        # still report as open.
+        walker.note_untrusted("BASH_XTRACEFD, which can close the shell's stdin, is set")
     if any(_rebinds_names(i) for i in layer.invocations):
         # `enable -n command` makes a later `command x` run a `command` program from PATH,
         # like `hash -p`.
@@ -1483,6 +1499,13 @@ CODE_VARIABLES = (
 MODE_VARIABLES = ("POSIXLY_CORRECT", "BASH_COMPAT", "SHELLOPTS", "BASHOPTS", "histchars")
 _NAMES_MODE_VARIABLE = re.compile(
     r"(?:-[A-Za-z]*)?(?:" + "|".join(MODE_VARIABLES) + r")(?:\[.*\])?(?:\+?=.*)?$", re.S
+)
+# Variables whose write or `unset` changes the shell's own descriptors: unsetting
+# BASH_XTRACEFD closes the descriptor it names, also 0 (`BASH_XTRACEFD=0; unset
+# BASH_XTRACEFD; read x` reads from a closed stdin).
+FD_VARIABLES = ("BASH_XTRACEFD",)
+_NAMES_FD_VARIABLE = re.compile(
+    r"(?:-[A-Za-z]*)?(?:" + "|".join(FD_VARIABLES) + r")(?:\[.*\])?(?:\+?=.*)?$", re.S
 )
 _NAMES_CODE_VARIABLE = re.compile(
     # Also attached to any options (`printf -vPS4`, `read -aPS4`).

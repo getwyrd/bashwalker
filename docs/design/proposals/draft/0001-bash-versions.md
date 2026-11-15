@@ -56,9 +56,11 @@ level in the profile, and the release's facts become the worst case over its pat
 An option the caller doesn't mention may be on or off, whatever its default: a session can
 have changed it. Only a caller that says the line runs in a fresh shell with the version's
 default options (`Bash("5.2", fresh=True)`) gets the profile's defaults for the options it
-doesn't mention. "Fresh" means one shell mode only: a non-interactive `bash -c` started
-without option flags, in an environment without `BASH_ENV`, `ENV`, `BASHOPTS`, `SHELLOPTS`,
-`POSIXLY_CORRECT`, `BASH_COMPAT` or an exported function (`BASH_FUNC_…`), which a new shell would inherit. An interactive shell (history expansion, among others,
+doesn't mention. "Fresh" means one shell mode only: a non-interactive `bash -c` from a build
+without `--enable-strict-posix-default`, started without option flags, in an environment
+with no variable bash runs as code or reads as options (`PS0`–`PS4`, `PROMPT_COMMAND`,
+`BASH_ENV`, `ENV`, `MAILPATH`, `FCEDIT`, `BASHOPTS`, `SHELLOPTS`, `POSIXLY_CORRECT`,
+`BASH_COMPAT`, `histchars`) and no exported function (`BASH_FUNC_…`), which a new shell would inherit. An interactive shell (history expansion, among others,
 changes the line before it is parsed) or one started with flags must not claim it. What the caller declares, and a fresh shell's defaults, describe the shell
 only when the line starts. If anything in the line may change an option, every option is
 unknown for the **whole** line, not only after that point: a function or loop can run code

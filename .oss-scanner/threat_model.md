@@ -78,7 +78,7 @@ request (draft proposal 0001). Releases older than 5.0 are not supported.
 
 ## Known gaps: do not report these on their own
 
-- The facts assume, for the whole run, history expansion off (non-interactive, or `set +H`), POSIX mode off (`set -o posix`, `POSIXLY_CORRECT`, started as `sh`) and `interactive_comments` on, and `terminal` stdin means the stdin the caller gave that bash (architecture §3.2). A report
+- The facts assume, for the whole run, history expansion off (non-interactive, or `set +H`), POSIX mode off (not started as `sh`, `POSIXLY_CORRECT` unset, or `set +o posix`), `keyword` off (`set +k`) and `interactive_comments` on, with every other option ADR-0010 does not list as harmless (such as `extglob` or a `compat` option) at bash's default, and `terminal` stdin means the stdin the caller gave that bash (architecture §3.2). A report
   that needs one of these settings changed, or that only says `terminal` may be a pipe, is a
   precondition the caller guarantees, not a broken fact. A line that changes one of these
   settings itself makes the tree untrusted from 0.1.2 (ADR-0010, GHSA-hc72-48v8-pvg7); a way

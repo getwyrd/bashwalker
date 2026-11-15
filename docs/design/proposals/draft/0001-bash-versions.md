@@ -71,8 +71,9 @@ nothing outside the line changes an option while it runs: a shell with a `DEBUG`
 `RETURN` trap, or anything else that runs code between the line's commands, must not
 declare options.
 
-The options that change how bash reads a line (history expansion, POSIX mode,
-`interactive_comments`) stay outside the profile: they remain caller preconditions
+The options that change how bash reads a line (history expansion, POSIX mode, `keyword`,
+`interactive_comments`, and every other option ADR-0010 does not list as harmless) stay
+outside the profile: they remain caller preconditions
 (architecture §3.2), so "every setting left open" never includes them and the default keeps
 today's results.
 

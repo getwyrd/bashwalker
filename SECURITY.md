@@ -15,7 +15,9 @@ promise, including flaws in the design itself.
 
 Versions before 0.1.1 can report a line as trusted while bash runs a command hidden in
 arithmetic. Versions before 0.1.2 can report trusted facts for a line that changes how bash
-reads its later commands (GHSA-hc72-48v8-pvg7). Use 0.1.2 or later.
+reads its later commands (GHSA-hc72-48v8-pvg7). Versions before 0.1.3 can report a trusted
+line in which `enable -n` makes a builtin's name run a program from `PATH` (#34). Use 0.1.3 or
+later.
 
 The threat model (assets, trust boundaries, adversaries and the attacks the project must
 withstand) is maintained with the design documentation: see

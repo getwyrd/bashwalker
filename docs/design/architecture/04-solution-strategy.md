@@ -43,6 +43,7 @@ scratch:
 1. Take the gate's shell layer out as its own package, keeping only facts (ADR-0007).
 2. Harden it through review and the differential test.
 3. Release v0.1.0, then v0.1.1 with the arithmetic rule (ADR-0009), v0.1.2 with the
-   line-reading options rule (ADR-0010), and v0.1.3 with the `enable` rule (#34).
+   line-reading options rule (ADR-0010), v0.1.3 with the `enable` rule (#34), and v0.1.4
+   with the `BASH_XTRACEFD` rule (#35).
 
 Next come PyPI publishing (§7) and bash version support (proposal 0001). §9 has the order.

@@ -19,7 +19,7 @@ PyPI's trusted publishing (OIDC, no stored token).
 Today callers install from the git tag and pin it:
 
 ```
-bashwalker @ git+https://github.com/getwyrd/bashwalker@v0.1.1
+bashwalker @ git+https://github.com/getwyrd/bashwalker@v0.1.2
 ```
 
 The package runs wherever its two dependencies have wheels: tree-sitter 0.26.0 (a native

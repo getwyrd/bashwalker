@@ -61,10 +61,11 @@ frontmatter, and both sides of every supersession agree. Run
 | [0007](0007-facts-only-no-policy.md) | Report facts only; policy belongs to the caller | Proposed |
 | [0008](0008-unproven-means-worst-case.md) | A fact not proven is reported as the worst case | Proposed |
 | [0009](0009-arithmetic-trusted-only-as-literal-numbers.md) | Arithmetic is trusted only when it is literal numbers | Proposed |
+| [0010](0010-options-that-change-reading-are-untrusted.md) | Options that change how bash reads the line make the tree untrusted | Proposed |
 
 ## ADR candidates
 
-None at the moment: the decisions that were settled elsewhere are now ADR-0006 to ADR-0009.
+None at the moment: the decisions that were settled elsewhere are now ADR-0006 to ADR-0010.
 Support for several bash versions is draft proposal 0001.
 
 | Candidate | Where it is decided now | Why it will need an ADR |

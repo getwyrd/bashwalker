@@ -51,6 +51,9 @@ PR number from the payload and posts a fixed comment. A change that adds an
   word marked `literal` is one bash does not expand; a stdin other than `unknown` is where
   bash really reads from. When the walker cannot prove a fact it reports the worst case
   (`Walk.untrusted`, a non-literal word, `unknown` stdin) or raises `ParseRefused`.
+- **What a command name runs is not changed unseen.** `hash -p`, `enable` other than a
+  listing (only `-a`, `-p`, `-s`, `-n` with no name and no `--`), and writes to
+  `BASH_CMDS` or `BASH_ALIASES` make the tree untrusted.
 - **Grammar disagreements are flagged.** A line that tree-sitter-bash reads differently
   from bash gives a non-empty `Walk.untrusted`, never a clean tree.
 - **Options that change reading are flagged.** A line that sets history expansion, POSIX
@@ -106,10 +109,8 @@ request (draft proposal 0001). Releases older than 5.0 are not supported.
 - A `[ … ]` test gives no `Invocation`, so a `[` redefined as a function or replaced on
   `PATH` runs unseen (#30). Known; other simple commands missing from `invocations` are in
   scope.
-- `enable` with a builtin name (`enable -n command; command x` runs a `command` program from
-  `PATH`, #34) and a write and `unset` of `BASH_XTRACEFD`, which closes a terminal stdin the
-  walk reports as `terminal` (#35). Known; other ways to change what a name runs or to close
-  stdin unseen are in scope.
+- A write and `unset` of `BASH_XTRACEFD` closes a terminal stdin the walk reports as
+  `terminal` (#35). Known; other ways to close stdin unseen are in scope.
 - What a command runs later (`eval`'s argument, `source`d files, `python -c`, aliases,
   functions defined elsewhere) is not in the line. The walker reports the command, not
   what it runs.

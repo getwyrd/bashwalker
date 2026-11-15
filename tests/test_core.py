@@ -98,6 +98,17 @@ UNTRUSTED = {
     ": \"${PS4:=$X}\"; set -x; :": "bash runs as code",
     "for PS4 in x; do :; done": "bash runs as code",
     "hash -p /tmp/evil ls; ls": "hash -p",
+    "enable -n command; command echo x": "enable with a builtin name",
+    "enable -n builtin; builtin echo x": "enable with a builtin name",
+    "enable echo": "enable with a builtin name",
+    "enable -- echo": "enable with a builtin name",
+    "enable $x": "enable with a builtin name",
+    "command enable -n test": "enable with a builtin name",
+    "command $'enable' -n command; command echo x": "enable with a builtin name",
+    "enable -- -x; -x": "enable with a builtin name",
+    "enable -n -- -x": "enable with a builtin name",
+    "enable -p echo": "enable with a builtin name",
+    "enable -d x": "enable with a builtin name",
     "printf -v $\"PS4\" x; set -x; :": "bash runs as code",
     "declare a['$(touch m)0']=1": "subscript with a substitution",
     "a[$'\\x24(touch m)0']=1": "subscript with a substitution",
@@ -294,6 +305,15 @@ def test_rule1_options_that_change_reading_are_untrusted(command):
 
 @pytest.mark.parametrize("command", MODE_TRUSTED)
 def test_rule1_harmless_options_stay_trusted(command):
+    assert bashwalker.walk(command).untrusted == (), command
+
+
+# `enable` only lists builtins in these forms; with a name it changes what the name runs.
+ENABLE_LISTING = ["enable", "enable -a", "enable -p", "enable -s", "enable -n", "enable -ap; ls"]
+
+
+@pytest.mark.parametrize("command", ENABLE_LISTING)
+def test_rule1_enable_listing_stays_trusted(command):
     assert bashwalker.walk(command).untrusted == (), command
 
 

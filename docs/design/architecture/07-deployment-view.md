@@ -20,8 +20,8 @@ Today callers install from git, pinned to the release's full commit hash, becaus
 be moved:
 
 ```
-# v0.1.2
-bashwalker @ git+https://github.com/getwyrd/bashwalker@28f29d286cd3787bcbf412002453935c4bd07f83
+# v0.1.3
+bashwalker @ git+https://github.com/getwyrd/bashwalker@c53396e4971202b7b86d19ada9efa7248ffe1d41
 ```
 
 The package runs wherever its two dependencies have wheels: tree-sitter 0.26.0 (a native

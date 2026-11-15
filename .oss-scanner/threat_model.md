@@ -44,6 +44,9 @@ PR number from the payload and posts a fixed comment. A change that adds an
   word marked `literal` is one bash does not expand; a stdin other than `unknown` is where
   bash really reads from. When the walker cannot prove a fact it reports the worst case
   (`Walk.untrusted`, a non-literal word, `unknown` stdin) or raises `ParseRefused`.
+- **What a command name runs is not changed unseen.** `hash -p`, `enable` other than a
+  listing (only `-a`, `-p`, `-s`, `-n` with no name and no `--`), and writes to
+  `BASH_CMDS` or `BASH_ALIASES` make the tree untrusted.
 - **Grammar disagreements are flagged.** A line that tree-sitter-bash reads differently
   from bash gives a non-empty `Walk.untrusted`, never a clean tree.
 - **Options that change reading are flagged.** A line that sets history expansion, POSIX

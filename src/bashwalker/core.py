@@ -1037,12 +1037,6 @@ def _simple(walker: Walker, node, ctx: Ctx, depth: int, bound: tuple = ()) -> No
                 # what they say.
                 walker.note_untrusted("hash -p, which changes what a command name runs")
                 break
-    enable_at = 0 if words and words[0].literal and words[0].text == "enable" else head
-    if enable_at is not None and words[enable_at].text == "enable":
-        if any(not w.literal or not w.text.startswith("-") for w in words[enable_at + 1 :]):
-            # `enable -n command` makes a later `command x` run a `command` program from
-            # PATH, like `hash -p`; only the listing forms (`enable -a`, `-p`, `-s`) are safe.
-            walker.note_untrusted("enable with a builtin name, which changes what a command name runs")
     alias_at = 0 if words and words[0].literal and words[0].text == "alias" else head
     if alias_at is not None and words[alias_at].text == "alias":
         if any(not w.literal or "=" in w.text for w in words[alias_at + 1 :]):
@@ -1447,6 +1441,10 @@ def walk(source: str, limits: Limits = DEFAULT_LIMITS) -> Walk:
         # Code the walker does not see (`eval 'set -o posix'`, a trap, a sourced file, a
         # command word it cannot read) may set one of those options before the others run.
         walker.note_untrusted("shell code the walker does not see may change how bash reads the line")
+    if any(_rebinds_names(i) for i in layer.invocations):
+        # `enable -n command` makes a later `command x` run a `command` program from PATH,
+        # like `hash -p`.
+        walker.note_untrusted("enable with a builtin name, which changes what a command name runs")
     if walker.operands:
         # Words after a redirect target with no simple command to take them
         # (`{ cat; } <a b`, a syntax error in bash): the tree is not bash's.
@@ -1645,6 +1643,25 @@ def _changes_line_reading(invocation: Invocation) -> bool:
     if head.text == "set":
         return _set_changes_reading(args)
     return _shopt_changes_reading(args)
+
+
+_ENABLE_LISTING = frozenset("apsn")  # with no name, these only list builtins
+
+
+def _rebinds_names(invocation: Invocation) -> bool:
+    """Whether ``invocation`` is ``enable`` (``command`` / ``builtin`` in front looked
+    through, its decoded name counted like ``set``'s) doing anything but listing: any word
+    other than a literal cluster of ``-a`` ``-p`` ``-s`` ``-n``, including ``--`` and every
+    name, may enable, disable, load or delete a builtin."""
+    head = command_head(invocation)
+    if head is None or head.text != "enable":
+        return False
+    words = list(invocation.words)
+    for word in words[words.index(head) + 1 :]:
+        text = word.text
+        if not word.literal or len(text) < 2 or text[0] != "-" or not set(text[1:]) <= _ENABLE_LISTING:
+            return True
+    return False
 
 
 def _set_changes_reading(args: list[Word]) -> bool:

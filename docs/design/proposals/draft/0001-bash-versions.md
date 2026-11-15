@@ -57,7 +57,7 @@ An option the caller doesn't mention may be on or off, whatever its default: a s
 have changed it. Only a caller that says the line runs in a fresh shell with the version's
 default options (`Bash("5.2", fresh=True)`), or passes no `bash=` at all (the default, see
 Backward compatibility), gets the profile's defaults for the options it doesn't mention. "Fresh" means one shell mode only: a non-interactive `bash -c` from a build
-without `--enable-strict-posix-default`, started without option flags, in an environment
+without `--enable-strict-posix-default`, started without option flags, with messages in the C locale (`LC_ALL` unset or `C`, and `LC_MESSAGES=C`) so `$"…"` is not translated, in an environment
 with no variable bash runs as code or reads as options (`PS0`–`PS4`, `PROMPT_COMMAND`,
 `BASH_ENV`, `ENV`, `MAILPATH`, `FCEDIT`, `BASHOPTS`, `SHELLOPTS`, `POSIXLY_CORRECT`,
 `BASH_COMPAT`, `histchars`, `BASH_XTRACEFD`) and no exported function (`BASH_FUNC_…`), which a new shell would inherit. An interactive shell (history expansion, among others,

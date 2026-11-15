@@ -168,7 +168,7 @@ inputs that hold control characters in refused lines (`test_refusals_never_quote
   its generator does not produce can still be missing, and it does not compare stdin,
   redirect or assignment facts, which only the unit tests cover.
 - **Execution preconditions (§3.2).** The facts assume the options that change how bash
-  reads a line keep these settings for the whole run: history expansion off (non-interactive, or `set +H`), POSIX mode off (`set +o posix` before the line, or bash not started as `sh` and given neither `POSIXLY_CORRECT` nor `posix` in `SHELLOPTS`), `keyword` off (`set +k`) and `interactive_comments` on, with every other option ADR-0010 does not list as harmless (such as `extglob`, a `compat` option or a `BASH_COMPAT` level) at bash's default. An interactive shell with history expansion on can rewrite `!` words
+  reads a line keep these settings for the whole run: history expansion off (`set +H` before the line, or a non-interactive bash started without `-H` and given no `histexpand` in `SHELLOPTS`), POSIX mode off (`set +o posix` before the line, or bash not started as `sh` and given neither `POSIXLY_CORRECT` nor `posix` in `SHELLOPTS`), `keyword` off (`set +k`) and `interactive_comments` on, with every other option ADR-0010 does not list as harmless (such as `extglob`, a `compat` option or a `BASH_COMPAT` level) at bash's default. An interactive shell with history expansion on can rewrite `!` words
   that `walk()` reports as literal. From 0.1.2 a line that changes one of these settings
   itself makes the tree untrusted (ADR-0010). Code the walker does not see that ends a line
   (`source`, `eval`, an unreadable command word) may still change them for the next line;

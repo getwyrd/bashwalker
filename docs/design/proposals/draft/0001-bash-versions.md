@@ -48,8 +48,10 @@ walk(line)                                                      # default: every
 
 A version names a release at the patch level CI tests (`"5.2"` means 5.2.37, the level
 `scripts/build_bash.py` builds); the profile records it, and it moves only with a full test
-run. Other patch levels of a supported release are expected to agree; a disagreement found on
-one is a bug like any other, and the fix records that patch level in the profile.
+run. A version means every patch level of that release: other patch levels are expected to
+agree, and a disagreement found on one is a bug like any other. The fix records that patch
+level in the profile, and the release's facts become the worst case over its patch levels, so
+`Bash("5.2")` stays correct for any 5.2 a caller runs.
 
 An option the caller doesn't mention may be on or off, whatever its default: a session can
 have changed it. Only a caller that says the line runs in a fresh shell with the version's

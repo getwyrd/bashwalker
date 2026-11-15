@@ -4,7 +4,7 @@ bashwalker is early software (0.1.x). Its API isn't stable yet, but its one secu
 promise holds from 0.1.2 on: a fact `walk()` reports as proven holds for bash, in the
 supported versions (today 5.1–5.3 at the patch levels CI tests: 5.1.16, 5.2.37 and 5.3.20;
 see architecture §1.5). Other patch levels of those releases are expected to agree but are
-not tested; a disagreement on one is in scope. The facts also assume, for the whole run, history expansion off (non-interactive, or `set +H`), POSIX mode off (`set +o posix` before the line, or bash not started as `sh` and given neither `POSIXLY_CORRECT` nor `posix` in `SHELLOPTS`), `keyword` off (`set +k`) and `interactive_comments` on, with every other option ADR-0010 does not list as harmless (such as `extglob`, a `compat` option or a `BASH_COMPAT` level) at bash's default, and `terminal` stdin means the stdin the caller gave bash
+not tested; a disagreement on one is in scope. The facts also assume, for the whole run, history expansion off (`set +H` before the line, or a non-interactive bash started without `-H` and given no `histexpand` in `SHELLOPTS`), POSIX mode off (`set +o posix` before the line, or bash not started as `sh` and given neither `POSIXLY_CORRECT` nor `posix` in `SHELLOPTS`), `keyword` off (`set +k`) and `interactive_comments` on, with every other option ADR-0010 does not list as harmless (such as `extglob`, a `compat` option or a `BASH_COMPAT` level) at bash's default, and `terminal` stdin means the stdin the caller gave bash
 (architecture §3.2). The known exceptions are listed
 in [§14.9](docs/design/architecture/14-threat-model.md#149-gaps-and-their-disposition),
 each with an open issue (today wrong stdin and prefix facts for `PATH=… $(true)` (#28) and `coproc`

@@ -26,6 +26,13 @@ Treat all of the following as attacker-controlled:
    caller's policy. It is parsed by tree-sitter-bash (third-party, native code) and then
    walked by `core.py`.
 
+2. **An issue's title and body**, in `.github/workflows/triage-priority.yml`. Anyone can
+   open an issue. The `classify` job passes the text to a language model as data with a
+   read-only token; the `apply` job holds `issues: write`, runs no model, checks every label
+   in the model's plan against `labels.json` and writes only labels, an assignee and one
+   comment. Issue text never reaches a shell. A way to make it write anything else, or
+   reach a shell or a token, is in scope.
+
 Trusted: the pinned grammar release (changed only by a reviewed pin), the `Limits` the
 caller passes, and the caller's own handling of the facts.
 
@@ -78,7 +85,7 @@ request (draft proposal 0001). Releases older than 5.0 are not supported.
 
 ## Known gaps: do not report these on their own
 
-- The facts assume, for the whole run, history expansion off (non-interactive, or `set +H`), POSIX mode off (not started as `sh`, `POSIXLY_CORRECT` unset, or `set +o posix`), `keyword` off (`set +k`) and `interactive_comments` on, with every other option ADR-0010 does not list as harmless (such as `extglob` or a `compat` option) at bash's default, and `terminal` stdin means the stdin the caller gave that bash (architecture §3.2). A report
+- The facts assume, for the whole run, history expansion off (non-interactive, or `set +H`), POSIX mode off (`set +o posix` before the line, or bash not started as `sh` and given neither `POSIXLY_CORRECT` nor `posix` in `SHELLOPTS`), `keyword` off (`set +k`) and `interactive_comments` on, with every other option ADR-0010 does not list as harmless (such as `extglob`, a `compat` option or a `BASH_COMPAT` level) at bash's default, and `terminal` stdin means the stdin the caller gave that bash (architecture §3.2). A report
   that needs one of these settings changed, or that only says `terminal` may be a pipe, is a
   precondition the caller guarantees, not a broken fact. A line that changes one of these
   settings itself makes the tree untrusted from 0.1.2 (ADR-0010, GHSA-hc72-48v8-pvg7); a way

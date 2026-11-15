@@ -55,6 +55,14 @@ tags:
   `template-test`): no `actions/checkout` step and no `${{ github.event` expression in a
   `pull_request_target` workflow. That test is not copied into this project, so a change
   to the workflow is reviewed by hand against the same two rules.
+- **Issue text, in the triage workflow.** An issue's title and body are attacker-controlled:
+  anyone can open one. `triage-priority.yml` passes them to a language model as data, so
+  the model's answer is untrusted too. The boundary is between the two jobs: `classify`
+  runs the model with a read-only token and writes a plan; `apply` holds `issues: write`,
+  runs no model, checks every label in the plan against `labels.json`, and writes only
+  labels, an assignee and one comment. Issue text never reaches a shell (no
+  `${{ github.event.issue.* }}` in a run step). A way for issue text to make the workflow
+  write anything else, or to reach a shell or a token, crosses this boundary.
 
 ## 14.3 Adversaries
 
@@ -160,7 +168,7 @@ inputs that hold control characters in refused lines (`test_refusals_never_quote
   its generator does not produce can still be missing, and it does not compare stdin,
   redirect or assignment facts, which only the unit tests cover.
 - **Execution preconditions (§3.2).** The facts assume the options that change how bash
-  reads a line keep these settings for the whole run: history expansion off (non-interactive, or `set +H`), POSIX mode off (not started as `sh`, `POSIXLY_CORRECT` unset, or `set +o posix`), `keyword` off (`set +k`) and `interactive_comments` on, with every other option ADR-0010 does not list as harmless (such as `extglob` or a `compat` option) at bash's default. An interactive shell with history expansion on can rewrite `!` words
+  reads a line keep these settings for the whole run: history expansion off (non-interactive, or `set +H`), POSIX mode off (`set +o posix` before the line, or bash not started as `sh` and given neither `POSIXLY_CORRECT` nor `posix` in `SHELLOPTS`), `keyword` off (`set +k`) and `interactive_comments` on, with every other option ADR-0010 does not list as harmless (such as `extglob`, a `compat` option or a `BASH_COMPAT` level) at bash's default. An interactive shell with history expansion on can rewrite `!` words
   that `walk()` reports as literal. From 0.1.2 a line that changes one of these settings
   itself makes the tree untrusted (ADR-0010). Code the walker does not see that ends a line
   (`source`, `eval`, an unreadable command word) may still change them for the next line;

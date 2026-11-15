@@ -43,7 +43,7 @@ are on or off (question 4):
 walk(line, bash=Bash("5.2"))                                   # the caller knows its version
 walk(line, bash=Bash("5.1", "5.2"))                            # ... or that it is one of these
 walk(line, bash=Bash("5.2", on={"extglob"}, off={"nocaseglob"}))  # ... and some options
-walk(line)                                                      # default: every supported version
+walk(line)                                                      # default: every supported version, fresh
 ```
 
 A version names a release at the patch level CI tests (`"5.2"` means 5.2.37, the level
@@ -55,12 +55,12 @@ level in the profile, and the release's facts become the worst case over its pat
 
 An option the caller doesn't mention may be on or off, whatever its default: a session can
 have changed it. Only a caller that says the line runs in a fresh shell with the version's
-default options (`Bash("5.2", fresh=True)`) gets the profile's defaults for the options it
-doesn't mention. "Fresh" means one shell mode only: a non-interactive `bash -c` from a build
+default options (`Bash("5.2", fresh=True)`), or passes no `bash=` at all (the default, see
+Backward compatibility), gets the profile's defaults for the options it doesn't mention. "Fresh" means one shell mode only: a non-interactive `bash -c` from a build
 without `--enable-strict-posix-default`, started without option flags, in an environment
 with no variable bash runs as code or reads as options (`PS0`–`PS4`, `PROMPT_COMMAND`,
 `BASH_ENV`, `ENV`, `MAILPATH`, `FCEDIT`, `BASHOPTS`, `SHELLOPTS`, `POSIXLY_CORRECT`,
-`BASH_COMPAT`, `histchars`) and no exported function (`BASH_FUNC_…`), which a new shell would inherit. An interactive shell (history expansion, among others,
+`BASH_COMPAT`, `histchars`, `BASH_XTRACEFD`) and no exported function (`BASH_FUNC_…`), which a new shell would inherit. An interactive shell (history expansion, among others,
 changes the line before it is parsed) or one started with flags must not claim it. What the caller declares, and a fresh shell's defaults, describe the shell
 only when the line starts. If anything in the line may change an option, every option is
 unknown for the **whole** line, not only after that point: a function or loop can run code
@@ -151,8 +151,9 @@ versions outside 5.1–5.3 are not covered.
 
 ## Backward compatibility
 
-The parameter is optional, and its default keeps today's behaviour, so existing callers are
-unaffected. Adding a version to the default set, such as 5.0 (#29), can turn facts that are
+The parameter is optional. Its default is every supported version in a fresh shell, which
+is today's precondition (architecture §3.2), so the default keeps today's facts and existing
+callers are unaffected. Adding a version to the default set, such as 5.0 (#29), can turn facts that are
 proven today into the worst case. Such a change is announced in the release notes.
 
 ## Open questions

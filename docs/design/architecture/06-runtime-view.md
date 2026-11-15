@@ -36,9 +36,9 @@ sequenceDiagram
 ```
 
 The caller reads `walked.untrusted` first. An empty tuple means the tree is trusted and the
-facts hold, apart from the known gaps in §14.9, each with an open issue (#26, #28, #30); a
+facts hold, apart from the known gaps in §14.9, each with an open issue (#26, #28, #30, #34, #35); a
 caller that must not rely on those treats `coproc`, an assignment before a substitution with
-no command, and `[ … ]` as the worst case itself. Otherwise the caller treats the whole line
+no command, `[ … ]`, `enable` with a name and `BASH_XTRACEFD` as the worst case itself. Otherwise the caller treats the whole line
 as the worst case for its rules. For example, an interactive shell asks for confirmation, and an agent's guard blocks.
 
 ## 6.2 Other important paths

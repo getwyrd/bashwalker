@@ -6,6 +6,11 @@ stdin), every word marked literal or not, and the features that make the tree
 untrusted. It raises ``ParseRefused`` when it cannot prove its facts. It makes no policy
 decision: what a command may do is the caller's to judge, and every unproven fact is
 reported as the worst case so the caller can fail closed.
+
+The facts are for one line run on its own in a new, non-interactive shell with no startup
+files and a clean environment (SECURITY.md and architecture section 3.2 give the exact
+conditions). In an interactive shell, or one that has already run other lines, they do
+not hold.
 """
 
 from __future__ import annotations

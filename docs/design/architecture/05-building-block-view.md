@@ -43,7 +43,7 @@ graph TB
 |---|---|---|
 | `walk()` | Refuses oversized input before parsing; runs the rules in order; applies the checks that need the whole walk (a variable bash runs as code, assigned text holding a substitution, no stdin fact from an untrusted tree) | Yes |
 | `parse_source()` | The one entry point to the pinned grammar | Yes |
-| `untrusted_features()` | Rule 1: `ERROR` and `MISSING` nodes and every form the grammar reads differently from bash (§14.5) | Yes |
+| `untrusted_features()` | Rule 1, the parse-level part: `ERROR` and `MISSING` nodes and forms the grammar reads differently from bash (§14.5). Checks that need the walk (operands, arithmetic, variables bash runs as code) are added by the walker and `walk()`, so its empty result is not a trust verdict (§3.2, §8.1) | Yes |
 | `Walker`, `HANDLERS`, `_check_walk()` | Rule 2: visits every named node once; builds one `Invocation` per simple command; refuses when a node or command is missed or a budget runs out | Yes |
 | `lex_word()`, `make_word()` | Rule 3: quote removal as bash does it; a word is literal only with no expansion, glob, brace, tilde or decoding | Yes |
 | `Stdin` and the stdin logic in `Walker` | Rule 3: stdin is `terminal`, `pipe` or `literal` only for the listed forms, else `unknown` | Yes |

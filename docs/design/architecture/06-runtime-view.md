@@ -36,8 +36,10 @@ sequenceDiagram
 ```
 
 The caller reads `walked.untrusted` first. An empty tuple means the tree is trusted and the
-facts hold. Otherwise the caller treats the whole line as the worst case for its rules:
-For example, an interactive shell asks for confirmation, and an agent's guard blocks.
+facts hold, apart from the known gaps in §14.9, each with an open issue (#26, #28, #30, #35); a
+caller that must not rely on those treats `coproc`, an assignment before a substitution with
+no command, `[ … ]` and `BASH_XTRACEFD` as the worst case itself. Otherwise the caller treats the whole line
+as the worst case for its rules. For example, an interactive shell asks for confirmation, and an agent's guard blocks.
 
 ## 6.2 Other important paths
 
@@ -54,7 +56,7 @@ For example, an interactive shell asks for confirmation, and an agent's guard bl
   - `exec` with a redirect;
   - `eval`, `source`, `.`, `fc`, `trap` and `alias`;
   - a builtin with a code option (`mapfile`/`readarray -C`, `complete`/`compgen -C`/`-F`,
-    `bind -x`);
+    `bind -x`, `enable -f`, `jobs -x`);
   - a non-literal command word.
 
   Every invocation's stdin then becomes `unknown`, because any of them may run after it.

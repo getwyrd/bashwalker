@@ -51,11 +51,10 @@ stays untrusted.
 - Each danger is checked in bash 5.1, 5.2 and 5.3 by the differential job
   (`MODE_PROBES` in `tests/test_differential.py`).
 - `set` and `shopt` count by their decoded name (`$'set' -H`), and the tree is untrusted
-  wherever they appear, also as the last command: in a shell that runs several lines, the
-  change carries over to the next one.
-- Unseen code with nothing after it in the line stays trusted (`source venv/bin/activate`),
-  but in a shell that runs several lines it may change these options for the next line. The
-  walker reports such a command (`eval`, `source`, `.`, a trap, an unreadable command word),
-  and a caller that runs several lines in one shell treats it as able to change them.
+  wherever they appear, also as the last command.
+- Unseen code with nothing after it in the line stays trusted (`source venv/bin/activate`):
+  the facts are for a line run on its own in a new shell (§3.2), so what it changes ends
+  with the line. A shell that runs several lines carries state from one into the next and
+  has no guarantee.
 - Options changed outside the line (the caller's shell, a trap installed earlier) remain
   the caller's precondition (§3.2, threat model §14.9).

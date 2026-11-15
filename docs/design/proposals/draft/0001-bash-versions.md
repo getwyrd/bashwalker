@@ -40,13 +40,48 @@ line may run on: its versions and, optionally, the `shopt` and `set` options the
 are on or off (question 4):
 
 ```python
-walk(line, bash=Bash("5.2"))                       # the caller knows its version
-walk(line, bash=Bash("5.2", on={"extglob"}))      # ... and that extglob is on
-walk(line)                                          # default: every supported version
+walk(line, bash=Bash("5.2"))                                   # the caller knows its version
+walk(line, bash=Bash("5.1", "5.2"))                            # ... or that it is one of these
+walk(line, bash=Bash("5.2", on={"extglob"}, off={"nocaseglob"}))  # ... and some options
+walk(line)                                                      # default: every supported version, fresh
 ```
 
-An option the caller doesn't mention may be on or off. A fact is proven only when it holds
-for **every** version in the set, with every setting of the options left open. The default is the
+A version names a release at the patch level CI tests (`"5.2"` means 5.2.37, the level
+`scripts/build_bash.py` builds); the profile records it, and it moves only with a full test
+run. A version means every patch level of that release: other patch levels are expected to
+agree, and a disagreement found on one is a bug like any other. The fix records that patch
+level in the profile, and the release's facts become the worst case over its patch levels, so
+`Bash("5.2")` stays correct for any 5.2 a caller runs.
+
+An option the caller doesn't mention may be on or off, whatever its default: a session can
+have changed it. Only a caller that says the line runs in a fresh shell with the version's
+default options (`Bash("5.2", fresh=True)`), or passes no `bash=` at all (the default, see
+Backward compatibility), gets the profile's defaults for the options it doesn't mention. "Fresh" means one shell mode only: a non-interactive `bash -c` from a build
+without `--enable-strict-posix-default`, started without option flags, with messages in the C locale (`LC_ALL` unset or `C`, and `LC_MESSAGES=C`) so `$"…"` is not translated, in an environment
+with no variable bash runs as code or reads as options (`PS0`–`PS4`, `PROMPT_COMMAND`,
+`BASH_ENV`, `ENV`, `MAILPATH`, `FCEDIT`, `EDITOR`, `BASHOPTS`, `SHELLOPTS`, `POSIXLY_CORRECT`,
+`BASH_COMPAT`, `histchars`, `BASH_XTRACEFD`) and no exported function (`BASH_FUNC_…`), which a new shell would inherit. An interactive shell (history expansion, among others,
+changes the line before it is parsed) or one started with flags must not claim it. What the caller declares, and a fresh shell's defaults, describe the shell
+only when the line starts. If anything in the line may change an option, every option is
+unknown for the **whole** line, not only after that point: a function or loop can run code
+written before the change after it. What may change an option includes `shopt`, `set`,
+`enable`, `eval`, `source`, a function call or definition, a non-literal command word, and a
+write by any means (an assignment, `read`, `printf -v`, `declare`) to a variable that changes
+options or the shell's mode, such as `BASH_COMPAT`, `POSIXLY_CORRECT`, `SHELLOPTS` or
+`BASHOPTS`. The implementation fixes the exact list, each entry with a test.
+
+bashwalker sees only the line. A declaration (or `fresh=True`) is the caller vouching that
+nothing outside the line changes an option while it runs: a shell with a `DEBUG`, `ERR` or
+`RETURN` trap, or anything else that runs code between the line's commands, must not
+declare options.
+
+The options that change how bash reads a line in ways the profile does not model (history
+expansion, POSIX mode, `keyword`, `interactive_comments`) stay outside the profile: they remain caller preconditions
+(architecture §3.2), so "every setting left open" never includes them and the default keeps
+today's results.
+
+A fact is proven only when it holds for
+**every** version in the set, with every setting of the options left open. The default is the
 full supported set, so the default stays fail-closed and gives the same results as today.
 A caller that knows its bash, for example from `$BASH_VERSINFO` in the session that will run
 the line, passes that version and gets facts that need not cover the others.
@@ -55,7 +90,8 @@ the line, passes that version and gets facts that need not cover the others.
 release, what the walker needs to know:
 - syntax added or removed (`${ cmd; }` from 5.3);
 - integer variables (`SRANDOM` from 5.1);
-- default `shopt` settings that change expansion (`patsub_replacement` from 5.2);
+- default `shopt` settings that change expansion (`patsub_replacement` from 5.2), used only
+  for a caller that declares a fresh shell;
 - builtin options the walker reads (`wait -p` from 5.1).
 
 The rules consult the profile instead of hard-coding one bash. A difference that the
@@ -69,7 +105,9 @@ version.
 **Adding versions over time.** A new bash release is added in this order:
 
 1. `scripts/build_bash.py` builds it.
-2. The differential test runs against it in CI.
+2. The differential test and the unit tests for every fact class (words, stdin, redirects,
+   assignments) run against it in CI; the differential test alone covers only command
+   splitting and literal words (§8.5).
 3. Each difference it finds becomes a profile entry with a test.
 4. The release joins the supported set in a bashwalker release whose notes announce it
    (question 3).
@@ -104,7 +142,8 @@ A grammar pin move (ADR-0006) must pass the differential test on every supported
 The line is still the untrusted input (threat model §14.2). The new trusted input is the
 caller's statement of which bash will run the line, and with which options. A caller that
 names the wrong version or option
-can get facts that don't hold for the bash that actually runs. The default (all versions)
+can get facts that don't hold for the bash that actually runs, and so can a caller that
+declares options for a shell with traps that may change them. The default (all versions)
 is fail-closed, and the documentation tells callers to name a version only when they know
 it. The pull request that implements this adds the new input and its mitigation to both
 threat-model copies (§14 and `.oss-scanner/threat_model.md`); today §14.9 records only that
@@ -112,8 +151,9 @@ versions outside 5.1–5.3 are not covered.
 
 ## Backward compatibility
 
-The parameter is optional, and its default keeps today's behaviour, so existing callers are
-unaffected. Adding a version to the default set, such as 5.0 (#29), can turn facts that are
+The parameter is optional. Its default is every supported version in a fresh shell, which
+is today's precondition (architecture §3.2), so the default keeps today's facts and existing
+callers are unaffected. Adding a version to the default set, such as 5.0 (#29), can turn facts that are
 proven today into the worst case. Such a change is announced in the release notes.
 
 ## Open questions
@@ -128,5 +168,5 @@ proven today into the worst case. Such a change is announced in the release note
    time". The facts a caller gets never change without a bashwalker release. Until a bash
    release is added, a caller running it gets no guarantee (threat model §14.9).
 4. **Decided:** `shopt` and `set` options a caller knows (for example `extglob`) belong in
-   the same parameter as the version. They are tied together: the version decides some
-   options' defaults (`patsub_replacement` is on from 5.2).
+   the same parameter as the version. They are tied together: the version decides which
+   options exist and their defaults in a fresh shell (`patsub_replacement` is on from 5.2).

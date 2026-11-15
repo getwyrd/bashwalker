@@ -1037,6 +1037,12 @@ def _simple(walker: Walker, node, ctx: Ctx, depth: int, bound: tuple = ()) -> No
                 # what they say.
                 walker.note_untrusted("hash -p, which changes what a command name runs")
                 break
+    enable_at = 0 if words and words[0].literal and words[0].text == "enable" else head
+    if enable_at is not None and words[enable_at].text == "enable":
+        if any(not w.literal or not w.text.startswith("-") for w in words[enable_at + 1 :]):
+            # `enable -n command` makes a later `command x` run a `command` program from
+            # PATH, like `hash -p`; only the listing forms (`enable -a`, `-p`, `-s`) are safe.
+            walker.note_untrusted("enable with a builtin name, which changes what a command name runs")
     alias_at = 0 if words and words[0].literal and words[0].text == "alias" else head
     if alias_at is not None and words[alias_at].text == "alias":
         if any(not w.literal or "=" in w.text for w in words[alias_at + 1 :]):

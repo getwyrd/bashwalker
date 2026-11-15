@@ -8,7 +8,9 @@ not tested; a disagreement on one is in scope. Also, the facts hold for a line r
 (architecture §3.2). The known exceptions are listed
 in [§14.9](docs/design/architecture/14-threat-model.md#149-gaps-and-their-disposition),
 each with an open issue (today wrong stdin and prefix facts for `PATH=… $(true)` (#28) and `coproc`
-(#26), no invocation for a `[ … ]` test (#30), and `BASH_XTRACEFD` closing stdin (#35)). Its callers
+(#26), no invocation for a `[ … ]` test (#30), and in 0.1.3 and earlier a write and `unset` of
+`BASH_XTRACEFD` that closes a terminal stdin the walk reports as `terminal` (#35, fixed on
+`main` for the next release)). Its callers
 decide whether a command runs based on those facts; nl-shell and pdca-harness are the first,
 with their integrations in progress. We want to hear about anything that breaks the
 promise, including flaws in the design itself.

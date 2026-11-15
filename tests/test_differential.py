@@ -224,6 +224,31 @@ def test_option_changes_are_real_and_untrusted(tmp_path, line, flags, changed, p
     assert bashwalker.walk(line).untrusted, line
 
 
+def test_bash_xtracefd_closes_a_terminal_stdin_and_is_untrusted():
+    # Unsetting BASH_XTRACEFD closes the descriptor it names. On a terminal (read and
+    # write) bash accepts 0, so the shell's stdin is closed while the walk would say
+    # `terminal` (#35). A pipe is read-only, and bash refuses it as a trace file.
+    import pty
+    import subprocess
+
+    line = "BASH_XTRACEFD=0; unset BASH_XTRACEFD; read -t 1 x; echo status=$?"
+
+    def run(text: str) -> str:
+        primary, secondary = pty.openpty()
+        try:
+            return subprocess.run(
+                ["bash", "--norc", "--noprofile", "-c", text], stdin=secondary,
+                capture_output=True, text=True, timeout=10,
+            ).stdout
+        finally:
+            os.close(primary)
+            os.close(secondary)
+
+    assert run(line) == "status=1\n"  # read fails: stdin is closed
+    assert run("read -t 1 x; echo status=$?") != "status=1\n"  # timeout, not EBADF
+    assert bashwalker.walk(line).untrusted, line
+
+
 def test_generated_lines_agree_with_the_oracles():
     failures = {}
     for text in generated():

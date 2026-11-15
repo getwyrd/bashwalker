@@ -16,6 +16,8 @@ for invocation in walked.invocations:
 
 `walk()` parses a line with the pinned tree-sitter-bash grammar and returns one `Invocation` per simple command, including those inside substitutions, functions and here-doc command lines: its words (each marked literal or not), assignments, redirects and where its stdin comes from. `walked.untrusted` names any feature tree-sitter-bash reads differently from bash. A fact that cannot be proven comes back as the worst case (non-literal, `unknown` stdin, an untrusted tree), and a walk that cannot be completed raises `ParseRefused`. bashwalker makes no policy decision: what a command may do is the caller's to judge.
 
+The facts are for one line run on its own in a new, non-interactive shell with no startup files and a clean environment, for example `env -i PATH=… LC_ALL=C bash --norc --noprofile -c "$line"` (the exact conditions are in [SECURITY.md](SECURITY.md)). In an interactive shell, or one that has already run other lines, they do not hold. `terminal` stdin means the stdin the caller gave that shell.
+
 tree-sitter and tree-sitter-bash are pinned exactly, because every fact depends on how that grammar reads bash; pin bashwalker exactly for the same reason.
 
 ## Status

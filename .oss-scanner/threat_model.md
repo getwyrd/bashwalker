@@ -26,6 +26,13 @@ Treat all of the following as attacker-controlled:
    caller's policy. It is parsed by tree-sitter-bash (third-party, native code) and then
    walked by `core.py`.
 
+2. **An issue's title and body**, in `.github/workflows/triage-priority.yml`. Anyone can
+   open an issue. The `classify` job passes the text to a language model as data with a
+   read-only token; the `apply` job holds `issues: write`, runs no model, checks every label
+   in the model's plan against `labels.json` and writes only labels, an assignee and one
+   comment. Issue text never reaches a shell. A way to make it write anything else, or
+   reach a shell or a token, is in scope.
+
 Trusted: the pinned grammar release (changed only by a reviewed pin), the `Limits` the
 caller passes, and the caller's own handling of the facts.
 
@@ -70,13 +77,19 @@ are in `src/bashwalker/core.py`.
 Lower priority: `scripts/build_bash.py` (test tooling), the GitHub workflows.
 
 Out of scope: tree-sitter and tree-sitter-bash themselves (report a grammar bug only if
-bashwalker's use of it turns it into a wrong fact that looks proven); policy built on the
+bashwalker's use of it turns it into a wrong fact that looks proven, and a memory-safety bug
+only if `walk()` reaches it); policy built on the
 facts by a caller; a disagreement that shows only with a bash release outside the supported
 ones (5.0 until #29 adds it, or a newer release not yet added), which is a version-support
 request (draft proposal 0001). Releases older than 5.0 are not supported.
 
 ## Known gaps: do not report these on their own
 
+- Per architecture §3.2, the facts hold for a line run on its own in a new shell the caller starts for it, `env -i VAR=… bash --norc --noprofile -c "$line"`: a bash built without `--enable-strict-posix-default`, no other option flags, not started as `sh`, with messages in the C locale (`LC_ALL` unset or `C`, and `LC_MESSAGES=C`) so `$"…"` is not translated, and none of the caller's variables one bash runs as code or reads as options (`PS0`–`PS4`, `PROMPT_COMMAND`, `BASH_ENV`, `ENV`, `MAILPATH`, `FCEDIT`, `EDITOR`, `BASHOPTS`, `SHELLOPTS`, `POSIXLY_CORRECT`, `BASH_COMPAT`, `histchars`, `BASH_XTRACEFD`) or an exported function (`BASH_FUNC_…`). Such a shell has history expansion, POSIX mode, `keyword` and alias expansion off, `interactive_comments` on, every other option at bash's default, and no function, alias or trap. A shell that has already run another line carries that line's state into the next (functions, aliases, options, traps, `exec` redirections, variables, the working directory), which the next walk does not see; for such a shell, or an interactive one with startup files, the facts do not hold. `terminal` stdin means the stdin the caller gave that bash. A report
+  that needs one of these settings changed, or that only says `terminal` may be a pipe, is a
+  precondition the caller guarantees, not a broken fact. A line that changes one of these
+  settings itself makes the tree untrusted from 0.1.2 (ADR-0010, GHSA-hc72-48v8-pvg7); a way
+  past that rule within the line is in scope.
 - Rule 1 lists the grammar disagreements found so far; the differential test checks it
   against bash, `bash -n` and shfmt by sampling generated lines, not exhaustively. A new
   disagreement that gives a wrong fact without being flagged is in scope.
@@ -90,6 +103,13 @@ request (draft proposal 0001). Releases older than 5.0 are not supported.
   hidden command reached through arithmetic in one line otherwise is in scope.
 - Wrong stdin and prefix facts for `PATH=… $(true)` (#28) and `coproc` (#26), first reported as nl-shell#212. Known;
   variants beyond them are in scope.
+- A `[ … ]` test gives no `Invocation`, so a `[` redefined as a function or replaced on
+  `PATH` runs unseen (#30). Known; other simple commands missing from `invocations` are in
+  scope.
+- `enable` with a builtin name (`enable -n command; command x` runs a `command` program from
+  `PATH`, #34) and a write and `unset` of `BASH_XTRACEFD`, which closes a terminal stdin the
+  walk reports as `terminal` (#35). Known; other ways to change what a name runs or to close
+  stdin unseen are in scope.
 - What a command runs later (`eval`'s argument, `source`d files, `python -c`, aliases,
   functions defined elsewhere) is not in the line. The walker reports the command, not
   what it runs.

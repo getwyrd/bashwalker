@@ -1,11 +1,15 @@
 # Security policy
 
 bashwalker is early software (0.1.x). Its API isn't stable yet, but its one security
-promise holds from the start: a fact `walk()` reports as proven holds for bash, in the
-supported versions (today 5.1–5.3; see architecture §1.5). The known exceptions are listed
+promise holds from 0.1.2 on: a fact `walk()` reports as proven holds for bash, in the
+supported versions (today 5.1–5.3 at the patch levels CI tests: 5.1.16, 5.2.37 and 5.3.20;
+see architecture §1.5). Other patch levels of those releases are expected to agree but are
+not tested; a disagreement on one is in scope. Also, the facts hold for a line run on its own in a new shell the caller starts for it, `env -i VAR=… bash --norc --noprofile -c "$line"`: a bash built without `--enable-strict-posix-default`, no other option flags, not started as `sh`, with messages in the C locale (`LC_ALL` unset or `C`, and `LC_MESSAGES=C`) so `$"…"` is not translated, and none of the caller's variables one bash runs as code or reads as options (`PS0`–`PS4`, `PROMPT_COMMAND`, `BASH_ENV`, `ENV`, `MAILPATH`, `FCEDIT`, `EDITOR`, `BASHOPTS`, `SHELLOPTS`, `POSIXLY_CORRECT`, `BASH_COMPAT`, `histchars`, `BASH_XTRACEFD`) or an exported function (`BASH_FUNC_…`). Such a shell has history expansion, POSIX mode, `keyword` and alias expansion off, `interactive_comments` on, every other option at bash's default, and no function, alias or trap. A shell that has already run another line carries that line's state into the next (functions, aliases, options, traps, `exec` redirections, variables, the working directory), which the next walk does not see; for such a shell, or an interactive one with startup files, the facts do not hold. `terminal` stdin means the stdin the caller gave bash
+(architecture §3.2). The known exceptions are listed
 in [§14.9](docs/design/architecture/14-threat-model.md#149-gaps-and-their-disposition),
-each with an open issue (today wrong prefix facts for `PATH=… $(true)` (#28) and `coproc`
-(#26)). Its callers
+each with an open issue (today wrong stdin and prefix facts for `PATH=… $(true)` (#28) and `coproc`
+(#26), no invocation for a `[ … ]` test (#30), `enable` with a builtin name, which changes what
+the name runs (#34), and `BASH_XTRACEFD` closing stdin (#35)). Its callers
 decide whether a command runs based on those facts; nl-shell and pdca-harness are the first,
 with their integrations in progress. We want to hear about anything that breaks the
 promise, including flaws in the design itself.
@@ -56,12 +60,15 @@ are not in themselves security issues.
   word marked literal that bash expands, or a stdin reported as `terminal`, `pipe` or
   `literal` that is something else. Hidden commands, including commands reached through
   arithmetic, are the most serious case.
-- A crash, a hang, or time or memory far beyond `Limits` on some input.
+- A crash, a hang, or time or memory far beyond `Limits` on some input. A memory-safety bug
+  in tree-sitter or the pinned grammar that `walk()` reaches is in scope too: report it
+  upstream and to us, so we can move the pin and publish an advisory.
 - A `ParseRefused` message, or other error or diagnostic output, that carries the input.
   The facts themselves (word text, assignment values, redirect targets) carry the input on
   purpose.
 - A workflow or CI weakness that lets a fork's pull request write to the repository or
-  read secrets.
+  read secrets, or that lets an issue's text (which anyone can write) steer the triage
+  workflow beyond its labels, assignee and one comment.
 
 **Out of scope:** the documented residuals in
 [§14.8](docs/design/architecture/14-threat-model.md#148-residual-and-accepted-risks):
@@ -69,8 +76,8 @@ are not in themselves security issues.
   newer release not yet added): open a normal issue. Releases older than 5.0 are not
   supported;
 - what `eval`, `source`, a script or a non-literal command word runs later;
-- run-time shell state;
-- memory-safety bugs inside tree-sitter itself (report those upstream).
+- run-time shell state that exists before the line runs (§14.8). State the line itself
+  changes (aliases, assignments, `hash -p`, arithmetic that writes a variable) is in scope.
 
 A safe line reported as untrusted is a precision bug, not a vulnerability: please open a
 normal issue.

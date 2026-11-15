@@ -52,6 +52,12 @@ severity"), so a human, the bot and a security review rate the same report the s
 | Medium | `sev:major` | Unbounded time or memory within the limits, or a refusal or other diagnostic that quotes the input; also a crash, or ordinary command lines refused |
 | Low | `sev:minor` | A fact reported as the worst case that could have been proven (a safe line reported as untrusted): callers fail closed, at the cost of a confirmation or a block |
 
+The severity labels' generic meanings are shared by every project and stay as they are. For
+bashwalker this table is how they are read: "a security or safety property broken"
+(`sev:critical`) means a command or an expansion hidden from the caller, the two facts every
+policy depends on; any other wrong fact that looks proven counts as "a safety check bypassed"
+(`sev:major`). The triage prompt (`.github/triage/prompt.md`) uses the same reading.
+
 **Area: where the issue lives** (for routing and assignment): the `area:*` labels in
 `.github/triage/labels.json`:
 

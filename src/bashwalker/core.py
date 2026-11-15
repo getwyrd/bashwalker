@@ -14,6 +14,10 @@ The rules are numbered as in nl-shell's ``policy-gate/v1`` spec, where this walk
 from. Rule 4 there (which redirects are safe) is policy and stays with the caller; this
 module records the redirect facts that rule needs.
 
+The facts are for one line run on its own in a new, non-interactive shell with no startup
+files and a clean environment (architecture section 3.2); in an interactive shell, or one
+that has already run other lines, they do not hold.
+
 - Rule 1 (``untrusted_features``): the tree is trusted only with no ``ERROR`` or
   ``MISSING`` node and none of the features tree-sitter-bash reads differently from bash.
 - Rule 2 (``walk``): every named node is visited exactly once, and every ``command``,

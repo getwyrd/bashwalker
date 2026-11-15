@@ -90,7 +90,7 @@ request (draft proposal 0001). Releases older than 5.0 are not supported.
   precondition the caller guarantees, not a broken fact. A line that changes one of these
   settings itself makes the tree untrusted from 0.1.2 (ADR-0010, GHSA-hc72-48v8-pvg7); a way
   past that rule is in scope, except through code the walker does not see that ends the line
-  (`source`, `eval`, an unreadable command word), which is the caller's when it runs several
+  (any command ADR-0010 counts as unseen code: `eval`, `source`, `.`, `fc`, `trap`, `alias`, a code option such as `mapfile -C`, `complete -C`/`-F`, `bind -x`, `enable -f` or `jobs -x`, or an unreadable command word), which is the caller's when it runs several
   lines in one shell.
 - Rule 1 lists the grammar disagreements found so far; the differential test checks it
   against bash, `bash -n` and shfmt by sampling generated lines, not exhaustively. A new

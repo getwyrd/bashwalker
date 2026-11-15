@@ -55,7 +55,7 @@ stays untrusted.
   change carries over to the next one.
 - Unseen code with nothing after it in the line stays trusted (`source venv/bin/activate`),
   but in a shell that runs several lines it may change these options for the next line. The
-  walker reports such a command (`eval`, `source`, `.`, a trap, an unreadable command word),
+  walker reports such a command (any command ADR-0010 counts as unseen code: `eval`, `source`, `.`, `fc`, `trap`, `alias`, a code option such as `mapfile -C`, `complete -C`/`-F`, `bind -x`, `enable -f` or `jobs -x`, or an unreadable command word),
   and a caller that runs several lines in one shell treats it as able to change them.
 - Options changed outside the line (the caller's shell, a trap installed earlier) remain
   the caller's precondition (§3.2, threat model §14.9).

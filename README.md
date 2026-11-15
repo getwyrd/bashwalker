@@ -22,7 +22,7 @@ tree-sitter and tree-sitter-bash are pinned exactly, because every fact depends 
 
 ## Status
 
-Early: 0.1.3, not yet on PyPI.
+Early: 0.1.4, not yet on PyPI.
 
 There are some important notes and caveats:
 

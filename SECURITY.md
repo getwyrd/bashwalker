@@ -1,16 +1,14 @@
 # Security policy
 
 bashwalker is early software (0.1.x). Its API isn't stable yet, but its one security
-promise holds from 0.1.3 on: a fact `walk()` reports as proven holds for bash, in the
+promise holds from 0.1.4 on: a fact `walk()` reports as proven holds for bash, in the
 supported versions (today 5.1–5.3 at the patch levels CI tests: 5.1.16, 5.2.37 and 5.3.20;
 see architecture §1.5). Other patch levels of those releases are expected to agree but are
 not tested; a disagreement on one is in scope. Also, the facts hold for a line run on its own in a new shell the caller starts for it, `env -i VAR=… bash --norc --noprofile -c "$line"`: a bash built without `--enable-strict-posix-default`, no other option flags, not started as `sh`, with messages in the C locale (`LC_ALL` unset or `C`, and `LC_MESSAGES=C`) so `$"…"` is not translated, and none of the caller's variables one bash runs as code or reads as options (`PS0`–`PS4`, `PROMPT_COMMAND`, `BASH_ENV`, `ENV`, `MAILPATH`, `FCEDIT`, `EDITOR`, `BASHOPTS`, `SHELLOPTS`, `POSIXLY_CORRECT`, `BASH_COMPAT`, `histchars`, `BASH_XTRACEFD`) or an exported function (`BASH_FUNC_…`). Such a shell has history expansion, POSIX mode, `keyword` and alias expansion off, `interactive_comments` on, every other option at bash's default, and no function, alias or trap. A shell that has already run another line carries that line's state into the next (functions, aliases, options, traps, `exec` redirections, variables, the working directory), which the next walk does not see; for such a shell, or an interactive one with startup files, the facts do not hold. `terminal` stdin means the stdin the caller gave bash
 (architecture §3.2). The known exceptions are listed
 in [§14.9](docs/design/architecture/14-threat-model.md#149-gaps-and-their-disposition),
 each with an open issue (today wrong stdin and prefix facts for `PATH=… $(true)` (#28) and `coproc`
-(#26), no invocation for a `[ … ]` test (#30), and in 0.1.3 and earlier a write and `unset` of
-`BASH_XTRACEFD` that closes a terminal stdin the walk reports as `terminal` (#35, fixed on
-`main` for the next release)). Its callers
+(#26), and no invocation for a `[ … ]` test (#30)). Its callers
 decide whether a command runs based on those facts; nl-shell and pdca-harness are the first,
 with their integrations in progress. We want to hear about anything that breaks the
 promise, including flaws in the design itself.
@@ -18,8 +16,9 @@ promise, including flaws in the design itself.
 Versions before 0.1.1 can report a line as trusted while bash runs a command hidden in
 arithmetic. Versions before 0.1.2 can report trusted facts for a line that changes how bash
 reads its later commands (GHSA-hc72-48v8-pvg7). Versions before 0.1.3 can report a trusted
-line in which `enable -n` makes a builtin's name run a program from `PATH` (#34). Use 0.1.3 or
-later.
+line in which `enable -n` makes a builtin's name run a program from `PATH` (#34). Versions
+before 0.1.4 can report `terminal` stdin for a line whose write and `unset` of `BASH_XTRACEFD`
+closes that stdin (#35). Use 0.1.4 or later.
 
 The threat model (assets, trust boundaries, adversaries and the attacks the project must
 withstand) is maintained with the design documentation: see

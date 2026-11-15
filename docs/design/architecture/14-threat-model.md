@@ -146,8 +146,7 @@ inputs that hold control characters in refused lines (`test_refusals_never_quote
   `HOME`, the current branch, defined functions and aliases are the caller's to check. For
   arithmetic this includes an integer attribute an earlier command gave a variable (every
   value assigned to it is then evaluated) and `RANDOM`, `SECONDS` and the like unset
-  earlier, which lose their numeric meaning: in a persistent session (nl-shell) a caller
-  that must not run hidden commands checks those attributes in the live shell.
+  earlier, which lose their numeric meaning: a persistent session has no guarantee (§3.2).
 - **Machine-local Claude Code settings can leak secrets.** Claude Code saves each command
   approved with "don't ask again" verbatim, tokens included, to `.claude/settings.local.json`.
   The repository ignores it at any depth, and `.pre-commit-config.yaml` refuses to commit it
@@ -167,12 +166,9 @@ inputs that hold control characters in refused lines (`test_refusals_never_quote
   generated lines: command splits and literal words. It finds forms by sampling, so one
   its generator does not produce can still be missing, and it does not compare stdin,
   redirect or assignment facts, which only the unit tests cover.
-- **Execution preconditions (§3.2).** The facts assume the options that change how bash
-  reads a line keep these settings for the whole run: history expansion, POSIX mode, `keyword` and alias expansion off and `interactive_comments` on, every other option ADR-0010 does not list as harmless (such as `extglob`, a `compat` option or a `BASH_COMPAT` level) at bash's default, and no function, alias or trap the lines do not show. The caller gets this only from a shell it starts itself: a non-interactive bash, built without `--enable-strict-posix-default`, started without option flags and not as `sh`, in a clean environment (`env -i` plus the variables the caller sets itself) that holds no variable bash runs as code or reads as options (`PS0`–`PS4`, `PROMPT_COMMAND`, `BASH_ENV`, `ENV`, `MAILPATH`, `FCEDIT`, `BASHOPTS`, `SHELLOPTS`, `POSIXLY_CORRECT`, `BASH_COMPAT`, `histchars`) and no exported function (`BASH_FUNC_…`), that has run only lines `walk()` reported as trusted, none of them ending in code the walker does not see. A shell set up any other way, such as an interactive shell with startup files, cannot be reset reliably from inside, and the facts do not hold for it. An interactive shell with history expansion on can rewrite `!` words
+- **Execution preconditions (§3.2).** The facts hold for a line run on its own in a new shell the caller starts for it, `env -i VAR=… bash --norc --noprofile -c "$line"`: a bash built without `--enable-strict-posix-default`, no other option flags, not started as `sh`, and none of the caller's variables one bash runs as code or reads as options (`PS0`–`PS4`, `PROMPT_COMMAND`, `BASH_ENV`, `ENV`, `MAILPATH`, `FCEDIT`, `BASHOPTS`, `SHELLOPTS`, `POSIXLY_CORRECT`, `BASH_COMPAT`, `histchars`) or an exported function (`BASH_FUNC_…`). Such a shell has history expansion, POSIX mode, `keyword` and alias expansion off, `interactive_comments` on, every other option at bash's default, and no function, alias or trap. A shell that has already run another line carries that line's state into the next (functions, aliases, options, traps, `exec` redirections, variables, the working directory), which the next walk does not see; for such a shell, or an interactive one with startup files, the facts do not hold. An interactive shell with history expansion on can rewrite `!` words
   that `walk()` reports as literal. From 0.1.2 a line that changes one of these settings
-  itself makes the tree untrusted (ADR-0010). Code the walker does not see that ends a line
-  (any command ADR-0010 counts as unseen code: `eval`, `source`, `.`, `fc`, `trap`, `alias`, a code option (`mapfile`/`readarray -C`, `complete`/`compgen -C`/`-F`, `bind -x`, `enable -f` or `jobs -x`), or an unreadable command word) may still change them for the next line;
-  a caller that runs several lines in one shell treats such a line as able to. `terminal` stdin is the stdin the caller gave that bash; a
+  itself makes the tree untrusted (ADR-0010). `terminal` stdin is the stdin the caller gave that bash; a
   caller that runs the line with piped stdin treats `terminal` as a pipe.
 - **Bash releases outside 5.1–5.3 are not covered.** Their facts can differ (architecture
   §1.5); a caller whose bash is older or newer gets no guarantee. Bash 5.0 is planned (#29);

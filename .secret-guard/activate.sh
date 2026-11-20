@@ -18,10 +18,26 @@
 #
 # Known limits (accepted, not enforced here):
 # - Git LFS: a path a branch routes through LFS is scanned as its pointer, not its content.
-# - extensions.worktreeConfig: a per-worktree core.hooksPath is checked only for the worktree
-#   that runs activation.
 # - A core.hooksPath hook outside every checkout is yours: activation checks that it contains
 #   the runner line, not what runs before it.
+# - An absolute hooks path (or a symlink target) that passes through a checkout directory and
+#   back out with `..` is checked at its final target only, not at the directory it crosses.
+# - A branch that commits a protected name (.claude/settings.local.json and the like) as a
+#   symlink to an ordinary file hides later writes through that name from the path rule;
+#   gitleaks still scans the target's content.
+# - pre-commit is checked against this repository's worktrees only, not other repositories'.
+# - A separate git directory placed inside an ignored path of a worktree is not detected.
+# - --uninstall removes only hooks with the managed marker; an older two-line guard hook
+#   from before the marker stays and must be deleted by hand.
+# - core.hooksPath is compared across worktrees as it resolves at activation. A conditional
+#   include that starts to match later (an "onbranch:" include after a branch switch, a
+#   "gitdir:" include for a worktree added afterwards) or a later change to global config
+#   can still point Git at other hooks; re-run activation after adding a worktree or
+#   changing includes.
+# - Gitleaks rules that need a file's path as well as its content (hashicorp-tf-password,
+#   for one) cannot fire in the staged-blob pass, which gets no file name; the git-diff pass
+#   still applies them, except to files a branch marks -diff.
+# - Worktree paths containing a newline are not recognised as checkouts.
 # - --no-verify skips every hook; push protection on GitHub is the backstop.
 set -eu
 
@@ -42,16 +58,27 @@ esac
 
 d=$(git rev-parse --path-format=absolute --git-common-dir)
 hook="$d/hooks/pre-commit"
-mark="# secret-guard managed hook v8"
+mark="# secret-guard managed hook v11"
 # The line a core.hooksPath hook (outside every checkout) must contain to run the guard.
 req='exec "$(git rev-parse --path-format=absolute --git-common-dir)/secret-guard-run" "$@"'
 
 # --- where branches can write ---------------------------------------------------------------
 # Every worktree of this repository is checkout content a branch controls.
-worktrees=$(git worktree list --porcelain | sed -n 's/^worktree //p' | while IFS= read -r w; do
-  (cd "$w" 2>/dev/null && pwd -P) || true; done)
-
+# A bare repository's own entry (marked `bare`) is a git directory, not a checkout.
+# -z: without it, paths with non-ASCII or special characters come back C-quoted and would
+# be skipped below. Git before 2.36 lacks -z; refuse rather than check no worktree.
+git worktree list --porcelain -z >/dev/null 2>&1 ||
+  die "git worktree list --porcelain -z failed; the guard needs Git 2.36 or newer."
+registered=$(git worktree list --porcelain -z | tr '\000' '\n' |
+  awk '/^worktree /{ if (p != "" && !b) print p; p = substr($0, 10); b = 0; next }
+       /^bare$/ { b = 1 }
+       END { if (p != "" && !b) print p }')
 git_dir_real=$(cd "$d" && pwd -P)
+worktrees=$(printf '%s\n' "$registered" | while IFS= read -r w; do
+  [ -n "$w" ] || continue
+  (cd "$w" 2>/dev/null && pwd -P) || true
+done)
+
 
 # in_worktree PATH (physical): PATH lies in a worktree of this repository. Paths in the git
 # directory are not checkout content, unless a worktree itself lives inside the git directory.
@@ -118,12 +145,25 @@ chain_unsafe() {
 }
 
 # --- core.hooksPath ---------------------------------------------------------------------------
+nl='
+'
+# get_hooks_path [GIT-OPTION]: set hpv to the effective core.hooksPath exactly as Git resolves
+# it. Command substitution strips trailing newlines, so a sentinel keeps them.
+get_hooks_path() {
+  hpv=$(git "$@" config --path core.hooksPath && echo x) || return 1
+  hpv=${hpv%x}; hpv=${hpv%"$nl"}
+}
 hp=""
 hooks_path=""
 hooks_set=no
 if git config --get core.hooksPath >/dev/null 2>&1; then
   hooks_set=yes
-  hooks_path=$(git config --path core.hooksPath)   # --path: ~ expands as Git does
+  get_hooks_path || die "core.hooksPath is set but cannot be read."
+  hooks_path=$hpv   # --path: ~ expands as Git does
+  case $hooks_path in *"$nl"*)
+    die "core.hooksPath contains a newline, which this check cannot compare reliably; set a" \
+      "plain absolute path, then re-run.";;
+  esac
   [ -n "$hooks_path" ] || die "core.hooksPath is set but empty, so Git runs no hooks at all;" \
     "unset it (git config --unset core.hooksPath) or point it at a directory, then re-run."
   case $hooks_path in
@@ -131,6 +171,38 @@ if git config --get core.hooksPath >/dev/null 2>&1; then
     *) die "core.hooksPath ($hooks_path) is relative, so each worktree resolves it to a different" \
          "directory; set an absolute path outside every checkout, then re-run.";;
   esac
+fi
+
+# Git in each worktree uses that worktree's effective core.hooksPath. A per-worktree setting
+# (extensions.worktreeConfig) or a conditional include (includeIf "gitdir:" or "onbranch:")
+# can make it differ from the value checked here, and Git there would not run the guard.
+# Refuse any worktree whose effective value differs. Each worktree is read through its own
+# git directory (the common one for the main worktree, worktrees/<name> for a linked one), as
+# Git reads it there, so a worktree that is unmounted, moved or replaced by another directory
+# right now is still checked; the conditions Git offers (gitdir, onbranch, hasconfig) all
+# resolve from the git directory. A bare repository's own directory has no checkout and is
+# skipped. The comparison is literal: resolving symlinks could accept a path that runs
+# through a checkout, so equal means written equally.
+main_bare=$(git worktree list --porcelain -z | tr '\000' '\n' |
+  awk '/^$/ { exit } /^bare$/ { b = 1 } END { print (b ? "yes" : "no") }')
+if [ "${1:-}" != --uninstall ]; then
+  differ=$( { [ "$main_bare" = yes ] || printf '%s\n' "$d"
+              for a in "$d"/worktrees/*; do [ -f "$a/gitdir" ] && printf '%s\n' "$a"; done; } |
+    while IFS= read -r a; do
+      [ -n "$a" ] || continue
+      if git --git-dir="$a" config --get core.hooksPath >/dev/null 2>&1; then
+        get_hooks_path --git-dir="$a" 2>/dev/null || hpv=""
+        { [ "$hooks_set" = yes ] && [ -n "$hpv" ] && [ "$hpv" = "$hooks_path" ]; } || echo "$a"
+      else
+        [ "$hooks_set" = no ] || echo "$a"
+      fi
+    done)
+  if [ -n "$differ" ]; then
+    die "the worktrees with these git directories resolve core.hooksPath differently from here" \
+      "(a per-worktree setting or an includeIf), so Git there would not run the guard:" "$differ" \
+      "Write core.hooksPath identically in every worktree (same absolute path, no trailing" \
+      "slash difference), or unset it everywhere, then re-run."
+  fi
 fi
 
 if [ "${1:-}" = --uninstall ]; then
@@ -169,6 +241,12 @@ if [ "$hooks_set" = yes ]; then
       "Make $hooks_path/pre-commit executable and end it with this exact line:" "  $req"
   fi
 else
+  # A clone made with an empty template has no hooks directory: check where it would go
+  # (the git directory itself), then create it, so the checks below see a real directory.
+  if [ ! -e "$d/hooks" ] && [ ! -L "$d/hooks" ]; then
+    chain_unsafe any "$d" && die "the git directory $d is in or resolves into a checkout; refusing."
+    mkdir "$d/hooks"
+  fi
   if chain_unsafe any "$d/hooks" || { { [ -e "$hook" ] || [ -L "$hook" ]; } && chain_unsafe any "$hook"; }; then
     die "$d/hooks, or the pre-commit hook in it, is in or resolves into a checkout of this" \
       "repository, so a branch could replace it. Make $d/hooks a plain directory and remove" \

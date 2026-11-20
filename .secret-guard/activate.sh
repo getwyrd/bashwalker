@@ -187,7 +187,10 @@ main_bare=$(git worktree list --porcelain -z | tr '\000' '\n' |
   awk '/^$/ { exit } /^bare$/ { b = 1 } END { print (b ? "yes" : "no") }')
 if [ "${1:-}" != --uninstall ]; then
   differ=$( { [ "$main_bare" = yes ] || printf '%s\n' "$d"
-              for a in "$d"/worktrees/*; do [ -f "$a/gitdir" ] && printf '%s\n' "$a"; done; } |
+              # Every entry, dot-prefixed ones (a worktree at ../.topic) included.
+              for a in "$d"/worktrees/* "$d"/worktrees/.[!.]* "$d"/worktrees/..?*; do
+                [ -f "$a/gitdir" ] && printf '%s\n' "$a"
+              done; } |
     while IFS= read -r a; do
       [ -n "$a" ] || continue
       if git --git-dir="$a" config --get core.hooksPath >/dev/null 2>&1; then

@@ -288,5 +288,16 @@ git -C "$T/af.git" worktree add -q "$T/af-wt2" -b afw2 origin/main >/dev/null 2>
 act >/dev/null 2>&1 && bad "AF2 linked worktree without the include accepted" || ok "AF2 linked worktree without the include refused"
 cd "$T"
 
+# AG1: a dot-prefixed admin directory (worktrees/.agwt, as older Git created for a worktree at
+# ../.agwt; current Git writes -agwt) is compared too
+git clone -q up ag; cd ag; git config extensions.worktreeConfig true; git worktree add -q "$T/.agwt" -b agwt
+a=$(sed -n 's/^gitdir: //p' "$T/.agwt/.git"); mv "$a" "$PWD/.git/worktrees/.agwt"
+printf 'gitdir: %s\n' "$PWD/.git/worktrees/.agwt" > "$T/.agwt/.git"
+[ -d .git/worktrees/.agwt ] && [ "$(git -C "$T/.agwt" rev-parse --absolute-git-dir)" = "$PWD/.git/worktrees/.agwt" ] || bad "AG0 dot-prefixed admin directory not set up"
+git -C "$T/.agwt" config --worktree core.hooksPath "$T/.agwt/.hooks"
+act >/dev/null 2>&1 && bad "AG1 dot-named worktree override accepted" || ok "AG1 dot-named worktree override refused"
+git -C "$T/.agwt" config --worktree --unset core.hooksPath; act >/dev/null 2>&1 && ok "AG2 dot-named worktree without override activates" || bad AG2
+cd "$T"
+
 echo "$fails failed"
 [ "$fails" -eq 0 ]

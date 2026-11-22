@@ -598,6 +598,11 @@ def untrusted_features(tree: tree_sitter.Tree, source: bytes) -> tuple[str, ...]
                 if inner.type in _TEXT_KINDS and _SUBSTITUTION_TEXT.search(_decoded(inner)):
                     note("quoted text in an arithmetic context holding a substitution")
                     break
+        if node.type == "command" and _is_coproc(node):
+            # `coproc cmd` runs cmd in a subshell whose stdin and stdout are pipes to the
+            # shell; the grammar reads `coproc` as the command word and misparses
+            # `coproc NAME { …; }`, so no fact about it holds (#26).
+            note("coproc, whose command runs in a subshell the walker does not model")
         if node.type == "for_statement":  # also `select`, which the grammar parses so
             target = node.child_by_field_name("variable")
             name = target.text.decode("utf-8", "replace") if target is not None else ""
@@ -2164,6 +2169,23 @@ def _lexed(node: tree_sitter.Node) -> list[tuple[str, bool]]:
         text, causes = lex_word(_node_text(child))
         out.append((text, not causes))
     return out
+
+
+def _is_coproc(node: tree_sitter.Node) -> bool:
+    """Whether bash reads this command as a coprocess: `coproc` is a reserved word only
+    unquoted and first, with nothing before it (an assignment or a redirect makes it the
+    command named `coproc`), or after a reserved `time` and its options."""
+    if not _time_reserved(node):
+        return False
+    words = [_node_text(c) for c in _word_children(node)]
+    # Every reserved `time` and its options, and every `!` the grammar left as a word
+    # (`time ! coproc …`, `! ! coproc …`); an option other than `-p` is skipped too, which
+    # fails closed.
+    while words[:1] in (["time"], ["!"]):
+        reserved, words = words[0], words[1:]
+        while reserved == "time" and words and words[0].startswith("-"):
+            words = words[1:]
+    return words[:1] == ["coproc"]
 
 
 def _word_children(node: tree_sitter.Node) -> list[tree_sitter.Node]:

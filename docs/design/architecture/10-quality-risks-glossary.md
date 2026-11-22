@@ -28,7 +28,7 @@ tags:
 | A misread the generator doesn't produce | Rule 1 is complete only as far as it has been sampled | The differential test, review of each grammar pin change, abuse-case tests; §14.9 |
 | The grammar changes under a pin move | Facts change silently | Exact pins; Rule 2's exhaustive handlers; the differential test before any pin moves |
 | Too strict for ordinary lines | Callers ask for confirmation more often, and users learn to click through | Corpus comparison against a caller's policy; precision issues like #16 |
-| `coproc` facts are wrong | Known misread (#26) | Arithmetic fails closed on any `coproc`; fixing it is on the roadmap (§9) |
+| `coproc` facts are wrong | Fixed in 0.2 (#26) | Rule 1 makes the tree untrusted for any `coproc` where bash reserves the word |
 | The differential test compares only command splits and literal words | Stdin, redirect and assignment facts are checked by unit tests only | §14.9 |
 | `ARITHMETIC_SINKS` are run in bash by hand, not in CI | An entry that no longer runs its payload would not prove its rule | **[OPEN]** in §13 |
 | `core.py` is one large module | Harder to review | Sections follow the rules; split it when a section grows its own tests |

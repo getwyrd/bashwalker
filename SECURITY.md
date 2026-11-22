@@ -7,8 +7,9 @@ see architecture §1.5). Other patch levels of those releases are expected to ag
 not tested; a disagreement on one is in scope. Also, the facts hold for a line run on its own in a new shell the caller starts for it, `env -i VAR=… bash --norc --noprofile -c "$line"`: a bash built without `--enable-strict-posix-default`, no other option flags, not started as `sh`, with messages in the C locale (`LC_ALL` unset or `C`, and `LC_MESSAGES=C`) so `$"…"` is not translated, and none of the caller's variables one bash runs as code or reads as options (`PS0`–`PS4`, `PROMPT_COMMAND`, `BASH_ENV`, `ENV`, `MAILPATH`, `FCEDIT`, `EDITOR`, `BASHOPTS`, `SHELLOPTS`, `POSIXLY_CORRECT`, `BASH_COMPAT`, `histchars`, `BASH_XTRACEFD`) or an exported function (`BASH_FUNC_…`). Such a shell has history expansion, POSIX mode, `keyword` and alias expansion off, `interactive_comments` on, every other option at bash's default, and no function, alias or trap. A shell that has already run another line carries that line's state into the next (functions, aliases, options, traps, `exec` redirections, variables, the working directory), which the next walk does not see; for such a shell, or an interactive one with startup files, the facts do not hold. `terminal` stdin means the stdin the caller gave bash
 (architecture §3.2). The known exceptions are listed
 in [§14.9](docs/design/architecture/14-threat-model.md#149-gaps-and-their-disposition),
-each with an open issue (today wrong stdin and prefix facts for `PATH=… $(true)` (#28) and `coproc`
-(#26)). Before 0.2, a `[ … ]` test gave no invocation (#30). Its callers
+each with an open issue (today wrong stdin and prefix facts for `PATH=… $(true)` (#28)). Before
+0.2, a `[ … ]` test gave no invocation (#30) and a `coproc` line gave wrong facts (#26); a
+`coproc` now makes the tree untrusted. Its callers
 decide whether a command runs based on those facts; nl-shell and pdca-harness are the first,
 with their integrations in progress. We want to hear about anything that breaks the
 promise, including flaws in the design itself.

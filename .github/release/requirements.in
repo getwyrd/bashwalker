@@ -1,0 +1,5 @@
+# Build tools for the release workflow (.github/workflows/release.yml). The build runs
+# without isolation, so these pinned, hash-checked copies are what builds the package.
+# Regenerate: pip-compile --generate-hashes --strip-extras requirements.in
+build
+setuptools

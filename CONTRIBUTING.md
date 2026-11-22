@@ -36,6 +36,22 @@ This appends a `Signed-off-by: Your Name <you@example.com>` trailer (using your
   edited, only superseded. To propose a decision, follow
   [How an ADR is made](docs/design/adr/README.md#how-an-adr-is-made).
 
+## Releasing
+
+A maintainer releases in two steps:
+
+1. A release PR, "chore: release X.Y.Z", that bumps `version` in `pyproject.toml` and the
+   version in the README's Status section, and nothing else.
+2. Once it has merged and the `ci` run on `main` has passed: Actions → `release` → Run
+   workflow, on `main`. Approve the `publish` job when it waits on the `pypi`
+   environment.
+
+The workflow refuses a version that is already tagged or on PyPI, a commit whose `ci` run
+did not pass, and a `pypi` environment without a required reviewer (set it up once with
+`python3 -I scripts/repo-settings.py apply`). If it stops part-way, use "Re-run failed
+jobs", not a new run: a new run refuses a version PyPI already has, and the re-run picks up
+where it stopped. Architecture §7.1 describes each job.
+
 ## Issues
 
 New issues are triaged by the rules in [ADR-0005](docs/design/adr/0005-issue-priority-and-automated-triage.md):

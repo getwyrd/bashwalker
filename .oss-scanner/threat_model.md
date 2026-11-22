@@ -33,6 +33,19 @@ Treat all of the following as attacker-controlled:
    comment. Issue text never reaches a shell. A way to make it write anything else, or
    reach a shell or a token, is in scope.
 
+3. **The release path**, `.github/workflows/release.yml`, the only way to PyPI. PyPI trusts
+   uploads from this repository, that workflow and its `pypi` environment (trusted
+   publishing, no stored token). It runs only by hand from `main`, on a commit whose `ci`
+   push run passed, and refuses unless the `pypi` environment has a required reviewer and
+   a branch rule (`.github/release/preflight.py`); the upload waits for the maintainer's
+   approval. Each job holds only the permissions it needs: `attest` signs Sigstore
+   build-provenance attestations, `publish` holds the PyPI identity token, `release` alone
+   can write to the repository. A re-run uploads only files PyPI lacks and refuses one PyPI
+   holds with another hash, and the GitHub release refuses a `vX.Y.Z` tag on another
+   commit (`.github/release/release_steps.py`). A way to publish a file this workflow did
+   not build and test, from a commit other than the one that passed `ci` on `main`, or
+   without the environment approval, is in scope.
+
 Trusted: the pinned grammar release (changed only by a reviewed pin), the `Limits` the
 caller passes, and the caller's own handling of the facts.
 

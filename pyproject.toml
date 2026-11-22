@@ -8,7 +8,7 @@ version = "0.1.4"
 description = "A bash command line in, proven facts per simple command out: a fail-closed tree-sitter-bash walker"
 readme = "README.md"
 license = "Apache-2.0"
-authors = [{ name = "Eduard Ralph", email = "eduard@ralphovi.net" }]
+authors = [{ name = "Eduard Ralph" }]
 requires-python = ">=3.11"
 dependencies = [
     # Pinned exactly: every fact the walker proves depends on how this grammar reads
@@ -16,6 +16,12 @@ dependencies = [
     "tree-sitter==0.26.1",
     "tree-sitter-bash==0.25.1",
 ]
+
+[project.urls]
+# PyPI shows these; the README's relative links only work on GitHub.
+Source = "https://github.com/getwyrd/bashwalker"
+Issues = "https://github.com/getwyrd/bashwalker/issues"
+Documentation = "https://github.com/getwyrd/bashwalker/tree/main/docs/design"
 
 [project.optional-dependencies]
 dev = [
@@ -29,4 +35,4 @@ where = ["src"]
 # Tests import from src/ directly, never from an installed copy, so a test always runs
 # against the tree it sits in.
 pythonpath = ["src"]
-testpaths = ["tests"]
+testpaths = ["tests", ".github/release"]

@@ -13,6 +13,15 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: "deps"
+  - package-ecosystem: pip
+    directory: "/.github/release"
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci"
   - package-ecosystem: github-actions
     directory: "/"
     schedule:

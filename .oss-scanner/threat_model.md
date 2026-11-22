@@ -42,7 +42,10 @@ Treat all of the following as attacker-controlled:
    build-provenance attestations, `publish` holds the PyPI identity token, `release` alone
    can write to the repository. A re-run uploads only files PyPI lacks and refuses one PyPI
    holds with another hash, and the GitHub release refuses a `vX.Y.Z` tag on another
-   commit (`.github/release/release_steps.py`). A way to publish a file this workflow did
+   commit (`.github/release/release_steps.py`). The release is read, filled and published
+   by the ID its creation returned, never by tag: uploads go to that draft's own upload URL,
+   which must name this repository and that ID, so another draft with the same tag is never
+   touched. A way to publish a file this workflow did
    not build and test, from a commit other than the one that passed `ci` on `main`, or
    without the environment approval, is in scope.
 

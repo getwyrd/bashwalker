@@ -37,7 +37,8 @@ rule: a run that names a missing environment would create it unprotected. The la
 jobs can be re-run after a failure part-way (`.github/release/release_steps.py`): `publish`
 uploads only the files PyPI lacks and refuses one PyPI holds with another hash, and
 `release` resumes its draft, checks every file's digest and refuses a `vX.Y.Z` tag that
-points at another commit.
+points at another commit. It works on the draft by the ID its creation returned, and
+retries the reads that follow a write, since GitHub shows a write a moment later (#48).
 
 Each job gets only the permissions it needs; only `publish` can reach PyPI and only
 `release` can write to the repository. Release tags can't be moved or deleted (the

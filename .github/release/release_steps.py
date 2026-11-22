@@ -11,10 +11,14 @@ Both are safe to re-run after a failure part-way through:
   DIST, so the upload sends only the rest. A file PyPI has with a different hash stops the
   release.
 - `github-release` (needs gh) creates or resumes the draft release vVERSION targeting
-  GITHUB_SHA, uploads the files it lacks and checks every asset's digest, then publishes
-  it, which creates the tag. It refuses when a tag vVERSION already points at another
+  GITHUB_SHA and from then on reads, fills and publishes it by its ID: it uploads the files
+  it lacks and checks every asset's digest, then publishes it, which creates the tag. It refuses when a tag vVERSION already points at another
   commit, and after publishing it checks the tag points at GITHUB_SHA. A release that is
   already published with the same files and tag is left as it is.
+
+GitHub's reads lag its writes by a moment: a release just created, an asset just uploaded
+or a tag just made by publishing may not show yet. Each read that follows a write is tried
+READS times, READ_DELAY seconds apart, before the step refuses.
 """
 
 from __future__ import annotations
@@ -25,17 +29,42 @@ import os
 import re
 import subprocess
 import sys
+import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
 PROJECT = "bashwalker"
 SHA = re.compile(r"[0-9a-f]{40}")
 VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
+READS = 6
+READ_DELAY = float(os.environ.get("RELEASE_READ_DELAY", "3"))
 
 
 class Refused(Exception):
     pass
+
+
+def settled(read, done, what: str):
+    """Call read() until done(result) holds, READS times at most; return the last result.
+    For a read right after a write, which GitHub may not show yet. A Refused from read()
+    counts as not done until the last try, which raises it. done() raises Refused for a
+    state that is wrong rather than late, which stops at once: a later, staler read must
+    not hide it."""
+    for attempt in range(READS):
+        if attempt:
+            time.sleep(READ_DELAY)
+        try:
+            result = read()
+        except Refused:
+            if attempt == READS - 1:
+                raise
+            continue
+        if done(result):  # may raise Refused
+            return result
+    print(f"{what}: still not as expected after {READS} reads", file=sys.stderr)
+    return result
 
 
 def sha256(path: Path) -> str:
@@ -152,6 +181,27 @@ def check_assets(release: dict, local: dict[str, Path]) -> None:
             raise Refused(f"release asset {name} differs from the one built in this run")
 
 
+def release_by_id(repo: str, release_id: int) -> dict | None:
+    """The release with this ID (drafts too), None when GitHub has none (yet)."""
+    try:
+        release = gh_json("api", f"repos/{repo}/releases/{release_id}")
+    except Refused as e:
+        if "HTTP 404" in str(e):
+            return None
+        raise
+    if not isinstance(release, dict):
+        raise Refused(f"release {release_id}: not an object")
+    return release
+
+
+def assets_match(release: dict | None, local: dict[str, Path]) -> bool:
+    try:
+        check_assets(release or {}, local)
+    except Refused:
+        return False
+    return True
+
+
 def github_release(dist: Path, version: str, repo: str, sha: str) -> None:
     tag = f"v{version}"
     local = dist_files(dist)
@@ -168,33 +218,101 @@ def github_release(dist: Path, version: str, repo: str, sha: str) -> None:
         return
 
     if release is None:
-        gh("release", "create", tag, "--repo", repo, "--draft", "--target", sha,
-           "--title", tag, "--generate-notes")
-        release = find_release(repo, tag)
-        if release is None:
-            raise Refused(f"the draft release {tag} was created but can't be found")
-    elif release.get("target_commitish") != sha:
-        raise Refused(f"the draft release {tag} targets {release.get('target_commitish')}, "
-                      f"not {sha}; delete it by hand")
+        # Created through the API so the answer names the new draft's ID; every later read,
+        # and the publish, uses that ID, never the tag another draft could carry.
+        created = gh_json("api", "-X", "POST", f"repos/{repo}/releases",
+                          "-f", f"tag_name={tag}", "-f", f"target_commitish={sha}",
+                          "-f", f"name={tag}", "-F", "draft=true",
+                          "-F", "generate_release_notes=true")
+        release_id = created.get("id") if isinstance(created, dict) else None
+    else:
+        release_id = release.get("id")
+    if not isinstance(release_id, int):
+        raise Refused(f"the draft release {tag} has no readable ID")
+
+    def ours(r: dict | None) -> bool:
+        """Still our draft: this tag, the built commit, not yet published."""
+        return (r is not None and r.get("id") == release_id and r.get("draft") is True
+                and r.get("tag_name") == tag and r.get("target_commitish") == sha)
+
+    release = settled(lambda: release_by_id(repo, release_id), lambda r: r is not None,
+                      f"draft release {tag}")
+    if release is None:
+        raise Refused(f"the draft release {tag} ({release_id}) can't be found")
+    if not ours(release):
+        raise Refused(f"the draft release {tag} ({release_id}) targets "
+                      f"{release.get('target_commitish')} or is no longer a draft, not a draft "
+                      f"of {sha}; delete it by hand")
 
     have = asset_digests(release)
     stray = sorted(set(have) - set(local))
     if stray:
         raise Refused(f"the draft release {tag} has assets this run did not build: {stray}")
-    # --clobber replaces a partly uploaded or mismatching asset on the draft.
-    upload = [str(p) for name, p in local.items() if have.get(name) != sha256(p)]
-    if upload:
-        gh("release", "upload", tag, "--repo", repo, "--clobber", *upload)
-    release = find_release(repo, tag)
-    check_assets(release or {}, local)
+    # Uploads go to this draft's own upload URL, and a partly uploaded or mismatching asset
+    # is deleted by its own ID first: nothing here finds the draft by its tag again.
+    upload_url = str(release.get("upload_url") or "").split("{", 1)[0]
+    if not (upload_url.startswith("https://")
+            and upload_url.endswith(f"/repos/{repo}/releases/{release_id}/assets")):
+        raise Refused(f"the draft release {tag} ({release_id}) has an unexpected upload URL")
+    assets = {a.get("name"): a.get("id") for a in release.get("assets") or []}
+    for name, path in local.items():
+        if have.get(name) == sha256(path):
+            continue
+        if name in assets:
+            if not isinstance(assets[name], int):
+                raise Refused(f"asset {name} on the draft release {tag} has no readable ID")
+            gh("api", "-X", "DELETE", f"repos/{repo}/releases/assets/{assets[name]}")
+        gh("api", "-X", "POST", f"{upload_url}?name={urllib.parse.quote(name)}",
+           "-H", "Content-Type: application/octet-stream", "--input", str(path))
+
+    def filled(r: dict | None) -> bool:
+        """True once every built file shows with its digest. Only a missing asset or a
+        digest not computed yet counts as late; anything else is wrong and refuses."""
+        if r is None:
+            return False
+        if not ours(r):
+            raise Refused(f"the draft release {tag} ({release_id}) changed while it was filled")
+        shown = asset_digests(r)
+        stray = sorted(set(shown) - set(local))
+        if stray:
+            raise Refused(f"the draft release {tag} gained assets this run did not build: {stray}")
+        for name, path in local.items():
+            if shown.get(name) is not None and shown[name] != sha256(path):
+                raise Refused(f"release asset {name} differs from the one built in this run")
+        return all(shown.get(name) is not None for name in local)
+
+    # An uploaded asset may show late, or without its digest for a moment.
+    release = settled(lambda: release_by_id(repo, release_id), filled, f"assets of {tag}")
+    if not filled(release):
+        raise Refused(f"the assets of {tag} did not all show after {READS} reads")
 
     # Publishing creates the tag at the target; check again just before.
     pointed = tag_commit(repo, tag)
     if pointed is not None and pointed != sha:
         raise Refused(f"tag {tag} appeared and points at {pointed}, not {sha}")
-    gh("release", "edit", tag, "--repo", repo, "--draft=false")
-    if tag_commit(repo, tag) != sha:
-        raise Refused(f"release {tag} is published, but its tag does not point at {sha}")
+    gh("api", "-X", "PATCH", f"repos/{repo}/releases/{release_id}", "-F", "draft=false")
+    # Publishing creates the tag; it may take a moment to show. A tag on another commit is
+    # wrong, not late.
+    def tagged(c: str | None) -> bool:
+        if c is not None and c != sha:
+            raise Refused(f"release {tag} is published, but its tag points at {c}, not {sha}")
+        return c is not None
+
+    if not tagged(settled(lambda: tag_commit(repo, tag), tagged, f"tag {tag}")):
+        raise Refused(f"release {tag} is published, but its tag did not show")
+
+    # The published release, read by ID once it shows as published: the same files.
+    def published(r: dict | None) -> bool:
+        if r is None or r.get("draft") is True:
+            return False
+        if r.get("id") != release_id or r.get("tag_name") != tag:
+            raise Refused(f"release {release_id} changed while it was published")
+        check_assets(r, local)
+        return True
+
+    if not published(settled(lambda: release_by_id(repo, release_id), published,
+                             f"release {tag}")):
+        raise Refused(f"release {tag} did not show as published")
     print(f"Released {tag} from {sha}")
 
 

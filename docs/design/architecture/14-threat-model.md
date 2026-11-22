@@ -60,7 +60,15 @@ tags:
   no token is stored. It runs only by hand from `main`, on a commit whose `ci` run passed,
   refuses unless the `pypi` environment has a required reviewer and a branch rule, and the
   upload waits for the maintainer's approval on the environment. A re-run uploads only what
-  PyPI lacks, and the release refuses a tag that points at another commit. Its build tools
+  PyPI lacks, and the release refuses a tag that points at another commit. The GitHub
+  release is worked on by the ID its creation returned: reads, uploads (to that draft's
+  own upload URL, which must name this repository and that ID) and the publish never look
+  it up by tag again, and each read checks it is still a draft of this tag on the built
+  commit, so another draft with the same tag is never filled or published. Reads that
+  follow a write are retried a few times, since GitHub shows a write a moment later; only a
+  late state is retried (an asset or digest not shown yet), and a wrong one (another
+  target, an asset this run did not build, a different digest, a tag on another commit)
+  refuses at once. After publishing, the release is read by ID again and its files checked. Its build tools
   are hash-pinned and every action is pinned to a commit. Each file gets a Sigstore
   build-provenance attestation, so a caller can check that a wheel was built by this
   workflow from a given commit. Release tags can't be moved or deleted. A way to publish

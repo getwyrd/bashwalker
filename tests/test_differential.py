@@ -93,9 +93,34 @@ def line(rng: random.Random, depth: int = 0) -> str:
     ][kind - 4]()
 
 
+TEST_OPERATORS = ["-n", "-z", "-f", "-d", "!"]
+COMPARISONS = ["=", "!=", "==", "-eq", "-lt"]
+
+
+def bracket_test(rng: random.Random) -> str:
+    """A `[ … ]` test, which bash runs as the command `[` (#30); a redirect, if any,
+    goes after the `]` (inside, `<`/`>` is a redirection the walker flags)."""
+    shape = rng.randrange(4)
+    if shape == 0:
+        body = f"{rng.choice(TEST_OPERATORS)} {word(rng, 2)}"
+    elif shape == 1:
+        body = f"{word(rng, 2)} {rng.choice(COMPARISONS)} {word(rng, 2)}"
+    elif shape == 2:
+        body = f"{word(rng, 2)} {rng.choice(COMPARISONS)} {word(rng, 2)} -a -n {word(rng, 2)}"
+    else:
+        body = word(rng, 2)
+    test = f"[ {body} ]"
+    if rng.random() < 0.3:
+        test += f" {redirect(rng)}"
+    return rng.choice([test, f"{test} && {simple(rng, 2)}", f"if {test}; then {simple(rng, 2)}; fi"])
+
+
 def generated() -> list[str]:
     rng = random.Random(SEED)
     lines = [line(rng) for _ in range(LINES)]
+    # From their own stream, so adding them leaves the lines above unchanged.
+    tests = random.Random(SEED + 1)
+    lines += [bracket_test(tests) for _ in range(max(LINES // 10, 20))]
     return list(dict.fromkeys(lines))
 
 
@@ -130,7 +155,6 @@ def compatible(walker: tuple, other: tuple) -> bool:
 
 
 def differences(walker: list[tuple], other: list[tuple]) -> list[str]:
-    other = [c for c in other if not (c and c[0] == "[")]  # `[ ]` is a test_command
     if len(walker) < len(other):
         return [f"walker reports {len(walker)} commands, oracle {len(other)}: {other}"]
     # A one-to-one matching (augmenting paths): first-fit would give a walker command to

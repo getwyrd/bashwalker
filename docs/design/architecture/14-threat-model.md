@@ -137,8 +137,8 @@ inputs that hold control characters in refused lines (`test_refusals_never_quote
 
 | Threat | Mitigation | Test |
 |---|---|---|
-| Grammar disagreement hides a form | Rule 1 | `test_rule1_names_each_feature`, `test_rule1_quoted_text_is_trusted`, `test_rule1_untrusted_tree_proves_no_stdin` |
-| A command the walk never reports | Rule 2 | `test_rule2_one_invocation_per_simple_command`, `test_rule2_every_kind_has_a_handler`, `test_rule2_removed_handler_is_refused`, `test_rule2_skipped_children_are_refused`, `test_walk_reaches_every_simple_command` |
+| Grammar disagreement hides a form | Rule 1 | `test_rule1_names_each_feature`, `test_rule1_shell_operator_inside_a_bracket_test`, `test_rule1_bracket_edges_and_split_redirects`, `test_rule1_quoted_text_is_trusted`, `test_rule1_untrusted_tree_proves_no_stdin` |
+| A command the walk never reports | Rule 2 | `test_rule2_one_invocation_per_simple_command`, `test_rule2_every_kind_has_a_handler`, `test_rule2_removed_handler_is_refused`, `test_rule2_skipped_children_are_refused`, `test_walk_reaches_every_simple_command`, `test_rule2_bracket_test_is_an_invocation_of_bracket`, `test_rule2_bracket_test_in_any_position`, `test_rule2_bracket_test_the_walker_cannot_split_fails_closed` |
 | A non-literal word reported literal | Rule 3 | `test_rule3_literal_flag`, `test_declaration_operands` |
 | A wrong stdin fact | Rule 3 | `test_rule3_stdin_sources`, `test_rule3_path_stdin_keeps_its_redirect`, `test_unreadable_targets_are_marked`, `test_command_head_and_stdin_rewiring` |
 | A word lost to a descriptor | descriptor syntax | `test_words_next_to_redirects_are_kept` |
@@ -201,6 +201,7 @@ inputs that hold control characters in refused lines (`test_refusals_never_quote
   (#27) designs support for several versions. When it is implemented, the caller's statement
   of which bash runs the line becomes a trusted input, and this section gains an entry for it.
 - **Known misreads, each with an open issue:** wrong stdin and prefix facts for
-  `PATH=… $(true)` (#28) and `coproc` (#26), first reported as nl-shell#212, whose `</dev/stdin` form is fixed; and no invocation for a `[ … ]` test, so a redefined `[` runs unseen (#30). The two
+  `PATH=… $(true)` (#28) and `coproc` (#26), first reported as nl-shell#212, whose `</dev/stdin` form is fixed. A `[ … ]` test gave no
+  invocation before 0.2, so a redefined `[` ran unseen; it is now an invocation of `[` (#30). The two
   backtick forms of nl-shell#213 are flagged by Rule 1; other forms of the same kind are
   for the differential oracle to find.

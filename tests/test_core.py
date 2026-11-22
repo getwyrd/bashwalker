@@ -174,8 +174,8 @@ def tree_counts(command: str) -> tuple[int, set[str]]:
         node = stack.pop()
         if node.is_named:
             kinds.add("ERROR" if node.is_error else node.type)
-            if node.type in core.SIMPLE_KINDS:
-                count += 1
+            if node.type in core.SIMPLE_KINDS or core._is_bracket_test(node):
+                count += 1  # `[ … ]` runs the command `[` (#30)
         stack.extend(node.children)
     return count, kinds
 
@@ -341,6 +341,122 @@ def test_rule1_untrusted_tree_proves_no_stdin():
 
 
 # --- Rule 2 --------------------------------------------------------------------------
+
+
+def words_of(invocation):
+    return [(w.text, w.literal) for w in invocation.words]
+
+
+def test_rule2_bracket_test_is_an_invocation_of_bracket():
+    """#30: `[` is a builtin a function or `enable -n` can replace, so a `[ … ]` test is
+    reported as the command `[` with its words, like any simple command."""
+    (test,) = bashwalker.walk("[ -f x ]").invocations
+    assert (test.kind, words_of(test), test.stdin.kind) == (
+        "command", [("[", True), ("-f", True), ("x", True), ("]", True)], "terminal")
+    assert bashwalker.command_head(test).text == "["
+    (test,) = bashwalker.walk('[ ! a"b" = c$d -o -n "$e" ]').invocations
+    assert words_of(test) == [("[", True), ("!", True), ("ab", True), ("=", True),
+                              ("c$d", False), ("-o", True), ("-n", True), ("$e", False),
+                              ("]", True)]
+    assert words_of(bashwalker.walk("[ ]").invocations[0]) == [("[", True), ("]", True)]
+    assert not bashwalker.walk("[ -f x ]").untrusted
+
+
+def test_rule2_bracket_test_in_any_position():
+    walked = bashwalker.walk("cat | [ -t 0 ] && ! [ -f x ] || if [ a ]; then f() { [ b ]; }; fi")
+    tests = [i for i in walked.invocations if i.words[0].text == "["]
+    assert len(tests) == 4
+    assert tests[0].stdin.kind == "pipe"
+    assert tests[3].in_function
+    assert bashwalker.walk("[ -f x ] &").invocations[0].stdin.kind == "unknown"
+
+
+def test_rule2_bracket_test_redirects_and_stdin_order():
+    (test,) = bashwalker.walk("[ x ] 2>/dev/null").invocations
+    assert [(r.operator, r.target.text) for r in test.redirects] == [(">", "/dev/null")]
+    # As for any command, the words are expanded before the redirects are performed:
+    # a substitution in a word reads the shell's stdin, the test reads the file.
+    sub, test = bashwalker.walk('[ "$(cat)" ] <f').invocations
+    assert (sub.words[0].text, sub.stdin.kind) == ("cat", "terminal")
+    assert test.words[0].text == "[" and test.stdin.kind != "terminal"
+    assert [r.operator for r in test.redirects] == ["<"]
+
+
+def test_rule2_bracket_test_with_a_loose_redirect():
+    walked = bashwalker.walk("[ x > y ]")
+    (test,) = walked.invocations
+    assert words_of(test) == [("[", True), ("x", True), ("]", True)]
+    assert [(r.kind, r.in_test) for r in test.redirects] == [("loose", True)]
+    assert any("inside [ ]" in f for f in walked.untrusted)
+    assert bashwalker.walk("[ x < y ]").invocations[0].stdin.kind == "unknown"
+
+
+@pytest.mark.parametrize("command", [
+    "[ x || touch ]",  # bash runs `[ x` and then `touch ]`
+    "[ x && sh$IFS-c$IFS'id' ]",
+    "[ a | b ]",
+    "[ a & b ]",
+    "[ ( a ) ]",  # a syntax error to bash
+])
+def test_rule1_shell_operator_inside_a_bracket_test(command):
+    """The grammar reads these as test operators; bash ends the command there."""
+    found = bashwalker.walk(command).untrusted
+    assert any("inside [ ]" in f for f in found), (command, found)
+
+
+@pytest.mark.parametrize("command, feature", [
+    ("printf x | [ x ]1<&2", "joined to the [ or ]"),  # bash: words `[ x ]1`, `<&2` on fd 0
+    ("[ x ]a", "joined to the [ or ]"),
+    ("[ x == a(b) ]", "cannot split into words"),  # a syntax error to bash
+    ("\\ [ x ]", "joined to the [ or ]"),  # bash runs the command ` [`
+    ("[ x == a\\\\&id ]", "cannot split into words"),  # `\\&`: the `&` is not escaped
+    ("[ x ] >\ny", "continued across a line break"),  # bash: syntax error at the newline
+    ("cat >\ny", "continued across a line break"),
+    ("cat <<<\ny", "continued across a line break"),
+])
+def test_rule1_bracket_edges_and_split_redirects(command, feature):
+    found = bashwalker.walk(command).untrusted
+    assert any(feature in f for f in found), (command, found)
+
+
+def test_rule2_bracket_test_word_pieces_the_grammar_gives_as_tokens():
+    (test,) = bashwalker.walk("[ ~/x ]").invocations  # `~` is a token in the tree
+    assert [(w.text, w.literal) for w in test.words][1] == ("~/x", False)
+    assert not bashwalker.walk("[ ~/x ]").untrusted
+
+
+def test_rule1_test_operands_inside_a_bracket_test_are_trusted():
+    for command in ("[ ! a = b ]", "[ a == b ]", "[ a != b ]", "[ a =~ b ]", "[ -n a -a -z b ]",
+                    "[[ a || b ]]", "[[ a && b ]]", "[ x ] || touch y", "[ x ]>f", "[ x ];y",
+                    "[ x ]&&y", "([ x ])", "[ x ]|cat", "cat <<E\nx\nE", "cat >f\necho",
+                    "[ --x ]", "[ % ]", "[ x == a\\&b ]"):
+        assert bashwalker.walk(command).untrusted == (), command
+
+
+@pytest.mark.parametrize("command", [
+    "[ " + "( " * 1000 + "a" + " )" * 1000 + " ]",
+    "[ " + "! " * 2000 + "a ]",
+])
+def test_rule5_deep_bracket_test_is_refused_not_a_recursion_error(command):
+    """The bracket scans are iterative: deep nesting reaches the depth limit (Rule 5)
+    instead of exhausting Python's stack."""
+    with pytest.raises(bashwalker.ParseRefused, match="nesting too deep"):
+        bashwalker.walk(command)
+
+
+def test_rule2_double_bracket_is_a_keyword_not_an_invocation():
+    assert bashwalker.walk("[[ -f x ]]").invocations == []
+
+
+def test_rule2_bracket_test_the_walker_cannot_split_fails_closed(monkeypatch):
+    # A node the walker does not know inside the test: the tree is untrusted and `[` is
+    # still reported, with the rest as one word it cannot read.
+    monkeypatch.setattr(core, "_TEST_WORDS", tuple(k for k in core._TEST_WORDS if k != "string"))
+    walked = bashwalker.walk('[ -n "$x" ]')
+    assert "[ … ] test the walker cannot split into words" in walked.untrusted
+    (test,) = walked.invocations
+    assert words_of(test)[0] == ("[", True)
+    assert [w.literal for w in test.words[1:]] == [False]
 
 
 def test_rule2_one_invocation_per_simple_command():

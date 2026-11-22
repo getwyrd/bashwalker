@@ -1,0 +1,195 @@
+name: release
+
+# Publishes a release to PyPI and GitHub (#24, architecture §7.1). Run it by hand from main
+# once the release PR (the version bump) has merged and main's ci run has passed:
+# Actions > release > Run workflow. CONTRIBUTING.md has the steps.
+#
+# check -> build -> test the built wheel -> attest -> publish to PyPI -> tag and GitHub
+# release. The publish job waits for the maintainer's approval on the `pypi` environment.
+# PyPI comes before the tag because it is the step that can't be undone. Both last steps
+# can be re-run after a failure part-way (.github/release/release_steps.py): re-run the
+# failed jobs, not the workflow, since a new run refuses a version PyPI already has.
+#
+# Signing: actions/attest-build-provenance signs a Sigstore build-provenance attestation
+# for each file, and PyPI's trusted publishing uploads PEP 740 attestations with them. No
+# token is stored: PyPI trusts this repository, this file and the `pypi` environment.
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      version: ${{ steps.preflight.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.14"
+      - name: Pre-flight (main only, new version, ci passed, pypi environment protected)
+        id: preflight
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python -I .github/release/preflight.py
+
+  build:
+    needs: check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.14"
+      - name: Install the pinned, hash-checked build tools
+        run: python -m pip install --quiet --require-hashes --no-deps -r .github/release/requirements.txt
+      - name: Build the sdist and wheel
+        # No isolation, so the pinned tools above build it rather than whatever is newest.
+        run: python -m build --no-isolation --outdir dist .
+      - name: Check the files
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          set -euo pipefail
+          expected="bashwalker-$VERSION-py3-none-any.whl
+          bashwalker-$VERSION.tar.gz"
+          actual="$(ls dist | sort)"
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::dist/ holds unexpected files:"; echo "$actual"; exit 1
+          fi
+          sha256sum dist/*
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  test-wheel:
+    name: test the ${{ matrix.package }} (Python ${{ matrix.python }})
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: true
+      matrix:
+        # Both files that get published are installed and tested: the wheel on the oldest
+        # and newest Python, the sdist (built into a wheel by pip) on the newest.
+        include:
+          - { package: wheel, python: "3.11" }
+          - { package: wheel, python: "3.14" }
+          - { package: sdist, python: "3.14" }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist
+      - name: Run the tests against the installed package, not src/
+        env:
+          PACKAGE: ${{ matrix.package }}
+        run: |
+          set -euo pipefail
+          venv="$RUNNER_TEMP/venv"
+          python -m venv "$venv"
+          case "$PACKAGE" in
+            wheel) file="$(ls dist/*.whl)" ;;
+            sdist) file="$(ls dist/*.tar.gz)" ;;
+            *) echo "::error::unknown package $PACKAGE"; exit 1 ;;
+          esac
+          "$venv/bin/python" -m pip install --quiet "$file[dev]"
+          # A copy of the tests outside the checkout, with an empty config: pyproject's
+          # pythonpath = ["src"] must not apply, so the tests import the installed package.
+          work="$RUNNER_TEMP/wheel-tests"
+          mkdir "$work"
+          cp -r tests "$work/tests"
+          printf '[pytest]\n' > "$work/pytest.ini"
+          cd "$work"
+          "$venv/bin/python" -c 'import bashwalker, sys; p = bashwalker.__file__; print(p); sys.exit("/site-packages/" not in p)'
+          "$venv/bin/python" -m pytest -p no:cacheprovider tests
+
+  attest:
+    needs: test-wheel
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*
+
+  publish:
+    needs: [check, attest]
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/bashwalker/${{ needs.check.outputs.version }}/
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist
+      - name: Leave out files PyPI already has from an earlier attempt
+        id: pending
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+        run: python3 -I .github/release/release_steps.py pypi-pending dist "$VERSION"
+      - name: Publish to PyPI (trusted publishing, PEP 740 attestations)
+        if: steps.pending.outputs.upload == 'true'
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+        with:
+          packages-dir: dist/
+
+  release:
+    needs: [check, publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist
+      - name: Tag the built commit and publish the GitHub release
+        # Creates or resumes a draft, uploads and checks the files, then publishes it,
+        # which creates the tag; refuses a tag that points at another commit.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.check.outputs.version }}
+        run: python3 -I .github/release/release_steps.py github-release dist "$VERSION"

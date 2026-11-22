@@ -55,6 +55,17 @@ tags:
   `template-test`): no `actions/checkout` step and no `${{ github.event` expression in a
   `pull_request_target` workflow. That test is not copied into this project, so a change
   to the workflow is reviewed by hand against the same two rules.
+- **The release workflow.** `release.yml` is the only path to PyPI: PyPI trusts uploads
+  from this repository, this workflow and its `pypi` environment (trusted publishing), and
+  no token is stored. It runs only by hand from `main`, on a commit whose `ci` run passed,
+  refuses unless the `pypi` environment has a required reviewer and a branch rule, and the
+  upload waits for the maintainer's approval on the environment. A re-run uploads only what
+  PyPI lacks, and the release refuses a tag that points at another commit. Its build tools
+  are hash-pinned and every action is pinned to a commit. Each file gets a Sigstore
+  build-provenance attestation, so a caller can check that a wheel was built by this
+  workflow from a given commit. Release tags can't be moved or deleted. A way to publish
+  a file this workflow didn't build, or from a commit that didn't pass `ci`, crosses this
+  boundary.
 - **Issue text, in the triage workflow.** An issue's title and body are attacker-controlled:
   anyone can open one. `triage-priority.yml` passes them to a language model as data, so
   the model's answer is untrusted too. The boundary is between the two jobs: `classify`

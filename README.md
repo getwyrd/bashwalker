@@ -22,7 +22,9 @@ tree-sitter and tree-sitter-bash are pinned exactly, because every fact depends 
 
 ## Status
 
-Early: 0.1.4, not yet on PyPI.
+Early: 0.1.4. From 0.1.5 on, releases go to PyPI: install one pinned exactly, `pip install bashwalker==X.Y.Z`. Earlier releases install from git ([architecture §7.1](docs/design/architecture/07-deployment-view.md#71-what-the-user-gets)).
+
+Each released file, on PyPI and on the GitHub release, carries a Sigstore build-provenance attestation from the release workflow. To check one: `gh attestation verify <file> --repo getwyrd/bashwalker`.
 
 There are some important notes and caveats:
 

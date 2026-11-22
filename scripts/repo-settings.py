@@ -19,7 +19,15 @@ The settings:
   repo's and owner's immutable IDs, so a renamed repo can't inherit a federation rule;
 - the default branch is protected: pull requests required (no approvals, since most
   projects have one maintainer), the status checks in .github/required-checks.txt
-  required, admins included, conversations resolved, no force-push or deletion.
+  required, admins included, conversations resolved, no force-push or deletion;
+- a repo that publishes releases (it has .github/workflows/release.yml on the default
+  branch) also gets: immutable releases; a tag ruleset that keeps `v*` tags from being
+  moved or deleted, with no bypass; and a `pypi` environment that deploys only from the
+  default branch and waits for a required reviewer, who may approve their own run. `apply`
+  keeps the reviewers, the wait timer and any stricter tag rules already set, and adds the
+  admin running it as reviewer only when there are none. These settings are read strictly:
+  only a 404 counts as absent, and any other error stops the script, so a refused read
+  can't turn the checks off or make `apply` overwrite what is there.
 
 The required checks come from .github/required-checks.txt on the repo's default branch
 (one per line; `#` starts a comment), or from --checks-file for a repo that doesn't
@@ -49,6 +57,11 @@ import time
 
 CHECKS_FILE = ".github/required-checks.txt"
 FEDERATION_VARIABLE = "ANTHROPIC_FEDERATION_RULE_ID"
+RELEASE_WORKFLOW = ".github/workflows/release.yml"
+RELEASE_ENVIRONMENT = "pypi"
+TAG_RULESET = "release tags"
+TAG_PATTERN = "refs/tags/v*"
+TAG_RULES = ("deletion", "non_fast_forward", "update")
 # A write takes a few seconds to show in GitHub's reads, so apply reads again this many
 # times, this many seconds apart, before it reports a setting it just set as different.
 READS_AFTER_APPLY = 5
@@ -75,6 +88,29 @@ def get(path: str) -> dict | None:
     return json.loads(out) if out.strip() else {}
 
 
+def get_or_absent(path: str) -> dict | None:
+    """Like get(), but only a 404 means absent; any other failure raises GhError. For a
+    setting whose absence turns checks off, where a passing error must not."""
+    try:
+        out = gh("api", path)
+    except GhError as exc:
+        if "HTTP 404" in str(exc):
+            return None
+        raise
+    return json.loads(out) if out.strip() else {}
+
+
+def tag_ruleset(base: str) -> dict | None:
+    """The full TAG_RULESET ruleset of the repo, or None when it has none."""
+    for summary in get_or_absent(f"{base}/rulesets?includes_parents=false") or []:
+        if summary.get("name") == TAG_RULESET and summary.get("target") == "tag":
+            ruleset = get_or_absent(f"{base}/rulesets/{summary['id']}")
+            if ruleset is None:
+                raise GhError(f"ruleset {summary['id']} is listed but can't be read")
+            return ruleset
+    return None
+
+
 def parse_checks(text: str) -> list[str]:
     names = [line.split("#", 1)[0].strip() for line in text.splitlines()]
     return [n for n in names if n]
@@ -86,7 +122,14 @@ def read(repo: str) -> dict:
     if meta is None:
         raise GhError(f"can't read {repo}; check the name and `gh auth status`")
     branch = meta["default_branch"]
+    env = f"{base}/environments/{RELEASE_ENVIRONMENT}"
+    releases = get_or_absent(f"{base}/contents/{RELEASE_WORKFLOW}?ref={branch}") is not None
     return {
+        "releases": releases,
+        "immutable": get_or_absent(f"{base}/immutable-releases") if releases else None,
+        "tag_ruleset": tag_ruleset(base) if releases else None,
+        "environment": get_or_absent(env) if releases else None,
+        "env_branches": get_or_absent(f"{env}/deployment-branch-policies") if releases else None,
         "repo": meta,
         "branch": branch,
         "pvr": get(f"{base}/private-vulnerability-reporting"),
@@ -147,6 +190,9 @@ def rows(state: dict, checks: list[str]) -> list[tuple[str, object, object, str]
          bool(oidc.get("use_default")) and bool(oidc.get("use_immutable_subject")), True, "oidc"),
     ]
 
+    if state["releases"]:
+        out += release_rows(state)
+
     branch = state["branch"]
     protection = state["protection"]
     if protection is None:
@@ -170,6 +216,44 @@ def rows(state: dict, checks: list[str]) -> list[tuple[str, object, object, str]
          "protection"),
         (f"{branch}: force-push allowed", enabled("allow_force_pushes"), False, "protection"),
         (f"{branch}: deletion allowed", enabled("allow_deletions"), False, "protection"),
+    ]
+
+
+def release_rows(state: dict) -> list[tuple[str, object, object, str]]:
+    ruleset = state["tag_ruleset"] or {}
+    ref_name = (ruleset.get("conditions") or {}).get("ref_name") or {}
+    env = state["environment"]
+    rules = [r for r in (env or {}).get("protection_rules") or []
+             if r.get("type") == "required_reviewers"]
+    policy = (env or {}).get("deployment_branch_policy")
+    if not policy:
+        deploys_from: object = "any branch"
+    elif policy.get("protected_branches"):
+        deploys_from = "protected branches"
+    else:
+        deploys_from = sorted(f"{p.get('type', 'branch')}:{p.get('name')}" for p in
+                              (state["env_branches"] or {}).get("branch_policies") or [])
+    return [
+        ("releases are immutable", bool((state["immutable"] or {}).get("enabled")), True,
+         "immutable"),
+        (f"tag ruleset '{TAG_RULESET}'", ruleset.get("enforcement", "missing"), "active", "tags"),
+        (f"tag ruleset '{TAG_RULESET}': covers {TAG_PATTERN}",
+         bool({TAG_PATTERN, "~ALL"} & set(ref_name.get("include") or [])), True, "tags"),
+        (f"tag ruleset '{TAG_RULESET}': tags excluded", sorted(ref_name.get("exclude") or []),
+         [], "tags"),
+        (f"tag ruleset '{TAG_RULESET}': missing blocks",
+         sorted(set(TAG_RULES) - {r.get("type") for r in ruleset.get("rules") or []}), [],
+         "tags"),
+        (f"tag ruleset '{TAG_RULESET}': bypass actors", len(ruleset.get("bypass_actors") or []),
+         0, "tags"),
+        (f"environment {RELEASE_ENVIRONMENT}", "present" if env else "missing", "present",
+         "environment"),
+        (f"environment {RELEASE_ENVIRONMENT}: required reviewers",
+         sum(len(r.get("reviewers") or []) for r in rules) > 0, True, "environment"),
+        (f"environment {RELEASE_ENVIRONMENT}: reviewer may approve their own run",
+         not any(r.get("prevent_self_review") for r in rules), True, "environment"),
+        (f"environment {RELEASE_ENVIRONMENT}: deploys from", deploys_from,
+         [f"branch:{state['branch']}"], "environment"),
     ]
 
 
@@ -225,6 +309,55 @@ def fix(name: str, repo: str, branch: str, checks: list[str]) -> None:
                "allow_force_pushes": False,
                "allow_deletions": False,
            }))
+    elif name == "immutable":
+        gh("api", "-X", "PUT", f"{base}/immutable-releases")
+    elif name == "tags":
+        existing = tag_ruleset(base)
+        # Keep anything stricter already there (more tags, required signatures, say) and add
+        # what is missing; only exclusions and bypasses, which weaken it, are dropped.
+        rules = list((existing or {}).get("rules") or [])
+        rules += [{"type": t} for t in TAG_RULES if t not in {r.get("type") for r in rules}]
+        include = list(((existing or {}).get("conditions") or {}).get("ref_name", {})
+                       .get("include") or [])
+        if not {TAG_PATTERN, "~ALL"} & set(include):
+            include.append(TAG_PATTERN)
+        body = json.dumps({
+            "name": TAG_RULESET, "target": "tag", "enforcement": "active", "bypass_actors": [],
+            "conditions": {"ref_name": {"include": include, "exclude": []}},
+            "rules": rules,
+        })
+        if existing:
+            gh("api", "-X", "PUT", f"{base}/rulesets/{existing['id']}", "--input", "-", stdin=body)
+        else:
+            gh("api", "-X", "POST", f"{base}/rulesets", "--input", "-", stdin=body)
+    elif name == "environment":
+        env = f"{base}/environments/{RELEASE_ENVIRONMENT}"
+        # Strict reads: a refused read must not look like an empty environment, or the PUT
+        # below would replace its reviewers and wait timer.
+        current = get_or_absent(env) or {}
+        reviewers = [{"type": r["type"], "id": r["reviewer"]["id"]}
+                     for rule in current.get("protection_rules") or []
+                     if rule.get("type") == "required_reviewers"
+                     for r in rule.get("reviewers") or []
+                     if r.get("type") in ("User", "Team") and (r.get("reviewer") or {}).get("id")]
+        if not reviewers:
+            reviewers = [{"type": "User", "id": int(gh("api", "user", "--jq", ".id").strip())}]
+        # Keep an existing wait timer; the PUT would otherwise reset it.
+        wait = next((r.get("wait_timer") or 0 for r in current.get("protection_rules") or []
+                     if r.get("type") == "wait_timer"), 0)
+        gh("api", "-X", "PUT", env, "--input", "-", stdin=json.dumps({
+            "wait_timer": wait, "prevent_self_review": False, "reviewers": reviewers,
+            "deployment_branch_policy": {"protected_branches": False,
+                                         "custom_branch_policies": True}}))
+        policies = (get_or_absent(f"{env}/deployment-branch-policies") or {}).get(
+            "branch_policies") or []
+        for policy in policies:
+            if (policy.get("type", "branch"), policy.get("name")) != ("branch", branch):
+                gh("api", "-X", "DELETE", f"{env}/deployment-branch-policies/{policy['id']}")
+        if not any((p.get("type", "branch"), p.get("name")) == ("branch", branch)
+                   for p in policies):
+            gh("api", "-X", "POST", f"{env}/deployment-branch-policies",
+               "-f", f"name={branch}", "-f", "type=branch")
     else:
         raise ValueError(name)
 

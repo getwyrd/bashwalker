@@ -198,6 +198,46 @@ def test_rule1_names_each_feature(command):
     assert any(UNTRUSTED[command] in f for f in found), (command, found)
 
 
+COPROC = "coproc, whose command runs in a subshell the walker does not model"
+
+
+@pytest.mark.parametrize("command", [
+    "coproc cat",
+    "coproc NAME { cat; }",  # the grammar misparses the named form
+    "coproc { cat; }",
+    "time coproc cat",
+    "time -p coproc cat",
+    "time time coproc cat",
+    "time -p time -- coproc cat",
+    "time ! coproc cat",  # the grammar leaves the inner `!` as a word
+    "! ! coproc cat",
+    "time ! time -p ! coproc cat",
+    "! coproc cat",
+    "a | coproc b",
+    "f() { coproc cat; }",
+    "echo $(coproc cat)",
+    "{ coproc cat; }",
+])
+def test_rule1_coproc_is_untrusted(command):
+    """#26: a coprocess runs its command in a subshell with pipes to the shell; the walker
+    reports `coproc` as the command word and the wrong stdin, so no fact about it holds."""
+    assert COPROC in bashwalker.walk(command).untrusted
+
+
+@pytest.mark.parametrize("command", [
+    "x=1 coproc cat",  # after an assignment, `coproc` is a command name, not reserved
+    ">f coproc cat",  # after a redirect too
+    "\\coproc cat",  # quoted, it is a command name
+    '"coproc" cat',
+    "echo coproc",
+    "command coproc cat",  # `command` runs the command named `coproc`
+])
+def test_rule1_coproc_only_where_bash_reserves_it(command):
+    walked = bashwalker.walk(command)
+    assert COPROC not in walked.untrusted
+    assert any(w.text == "coproc" for i in walked.invocations for w in i.words)
+
+
 def test_rule1_quoted_text_is_trusted():
     for command in (
         "echo '?(a)' \"*(b)\" \\@\\(c\\)",

@@ -79,6 +79,8 @@ PR number from the payload and posts a fixed comment. A change that adds an
   mode, `keyword` or turns off `interactive_comments` (by `set`, `shopt` or a mode variable
   such as `POSIXLY_CORRECT`), or runs unseen code (`eval`, `source`, a trap) before another
   command, gives a non-empty `Walk.untrusted` (ADR-0010).
+- **Coprocesses are flagged.** A `coproc` where bash reserves the word (first in a command,
+  or after a reserved `time`) gives a non-empty `Walk.untrusted` (#26).
 - **Bounded work.** Input over the size cap is refused before it is parsed; the walk has a
   node budget and a depth limit.
 
@@ -123,8 +125,8 @@ request (draft proposal 0001). Releases older than 5.0 are not supported.
   read, any indirect `${!name}` and any `coproc` are flagged. Arithmetic run by `eval`, `source` or a
   callback is the caller's (the walker reports those commands, not what they run); a
   hidden command reached through arithmetic in one line otherwise is in scope.
-- Wrong stdin and prefix facts for `PATH=… $(true)` (#28) and `coproc` (#26), first reported as nl-shell#212. Known;
-  variants beyond them are in scope.
+- Wrong stdin and prefix facts for `PATH=… $(true)` (#28), first reported as nl-shell#212. Known;
+  variants beyond it are in scope.
 - What a command runs later (`eval`'s argument, `source`d files, `python -c`, aliases,
   functions defined elsewhere) is not in the line. The walker reports the command, not
   what it runs.

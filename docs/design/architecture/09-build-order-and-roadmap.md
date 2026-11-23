@@ -20,7 +20,8 @@ tags:
 | `enable` rule (#34) | No line that changes what a builtin's name runs is reported as trusted | v0.1.3 |
 | `BASH_XTRACEFD` rule (#35) | No line that can close the shell's stdin unseen is reported as trusted | v0.1.4 |
 | PyPI publishing (#24) | Callers install it with `pip` and pin it exactly (§7) | first PyPI release |
-| `coproc` facts (#26) | `coproc` lines give correct facts or come back untrusted | |
+| `coproc` facts (#26) | `coproc` lines give correct facts or come back untrusted (Rule 1 now flags every `coproc`) | 0.2 |
+| `[ … ]` invocation (#30) | A `[ … ]` test is reported as the command `[`, which a caller can judge | 0.2 |
 | Bash versions (proposal 0001, #27) | Facts hold for every supported bash version a caller names | **[OPEN]** |
 | Bash 5.0 (#29) | Facts hold for 5.0 as well; nothing older is supported | **[OPEN]** |
 | Stable API | Callers can rely on the facts' meaning across minor releases (SECURITY.md) | **[OPEN]** 1.0 |

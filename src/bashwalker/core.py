@@ -574,6 +574,21 @@ def untrusted_features(tree: tree_sitter.Tree, source: bytes) -> tuple[str, ...]
             note("command the parser continued across a line break")
         if _bracket_redirects(node):
             note("'<' or '>' inside [ ], which bash reads as a redirection")
+        if node.type in ("file_redirect", "herestring_redirect") and _joined_across_lines(node):
+            # `cat >` then a new line `y`: bash reports a syntax error at the newline; the
+            # grammar takes `y` as the target.
+            note("redirect the parser continued across a line break")
+        if _is_bracket_test(node) and not (
+            _metachar_or_edge(source, node.start_byte - 1)
+            and _metachar_or_edge(source, node.end_byte)
+        ):
+            # `[ x ]1<&2`: bash reads `]1` as one word and `<&2` as a redirect of fd 0;
+            # the grammar ends the test at `]` and gives the `1` to the redirect.
+            note("word joined to the [ or ] of a [ ] test")
+        if _bracket_operators(node):
+            # `[ x || touch ]`: the grammar reads `||` as a test operator; bash ends the
+            # command there and runs `touch ]`.
+            note("operator inside [ ], which bash reads as ending the command")
         if node.type in _TEXT_KINDS and _HIDDEN_SUBSCRIPT.search(_decoded(node)):
             note("quoted text holding a subscript with a substitution bash may evaluate")
         if _is_arithmetic(node):
@@ -813,28 +828,190 @@ def _error(walker: Walker, node, ctx: Ctx, depth: int, bound: tuple = ()) -> Non
     _children(walker, node, ctx, depth, bound)
 
 
+# The nodes a `[ … ]` test is built of: expressions the walker looks through, and the
+# word-level nodes and operator tokens whose text is one of the command's words.
+_TEST_EXPRESSIONS = ("unary_expression", "binary_expression", "parenthesized_expression")
+_TEST_WORDS = (
+    "word", "string", "raw_string", "concatenation", "simple_expansion", "expansion",
+    "command_substitution", "process_substitution", "ansi_c_string", "translated_string",
+    "number", "test_operator", "arithmetic_expansion",
+)
+
+
+def _is_bracket_test(node: tree_sitter.Node) -> bool:
+    """A single-bracket test, `[ … ]`, which bash runs as the command `[`."""
+    return node.type == "test_command" and bool(node.children) and node.children[0].type == "["
+
+
+# `<` and `>` inside `[ … ]` are redirections, handled by `_bracket_redirects`.
+_REDIRECT_BYTES = frozenset(b"<>")
+
+
+_METACHARS = frozenset(b" \t\n;&|()<>")
+
+
+def _escaped(text: bytes, index: int) -> bool:
+    """Whether the byte at ``index`` is escaped: an odd run of backslashes before it."""
+    run = 0
+    while index - run - 1 >= 0 and text[index - run - 1] == 0x5C:
+        run += 1
+    return run % 2 == 1
+
+
+def _metachar_or_edge(source: bytes, index: int) -> bool:
+    """Whether the byte at ``index`` ends a bash word (an unescaped metacharacter), or
+    there is none (`\\ [` is the word ` [`, not a boundary)."""
+    if index < 0 or index >= len(source):
+        return True
+    return source[index] in _METACHARS and not _escaped(source, index)
+
+
+def _unescaped_metachar(text: bytes, allowed: frozenset = frozenset()) -> bool:
+    """Whether ``text`` holds an unescaped metacharacter not in ``allowed``."""
+    return any(c in _METACHARS and c not in allowed and not _escaped(text, i)
+               for i, c in enumerate(text))
+
+
+def _bracket_operators(node: tree_sitter.Node) -> list[tree_sitter.Node]:
+    """The tokens of a single-bracket test, outside its words, that bash reads as shell
+    syntax rather than as part of a word: any token holding a metacharacter (`||`, `&&`,
+    `|`, `&`, `(`), which ends the command or is an error, so the grammar's reading is
+    wrong. Word pieces the grammar gives as tokens (`~`, `-`, `!`, `=`) are not listed, nor
+    a `<`/`>`, which is a redirection (`_bracket_redirects`)."""
+    if not _is_bracket_test(node):
+        return []
+    found: list[tree_sitter.Node] = []
+    stack = [node]  # iterative: deep nesting must reach Rule 5, not the Python stack
+    while stack:
+        for child in stack.pop().children:
+            if not child.is_named:
+                if _unescaped_metachar(child.text, _REDIRECT_BYTES) or (
+                    child.type not in REDIRECT_OPERATORS and set(child.text) & _REDIRECT_BYTES
+                ):
+                    found.append(child)
+            elif child.type in _TEST_EXPRESSIONS:
+                stack.append(child)
+    return found
+
+
+def _bracket_words(
+    node: tree_sitter.Node, skip: set[int], skipped: list[tuple[int, int]]
+) -> list[tuple[int, int]] | None:
+    """The byte spans of the words bash splits a `[ … ]` test into, from `[` to `]`, or
+    None when the tree holds a node the walker does not know there. Tokens in ``skip``
+    (a loose `<`/`>` and its target) are not words; their spans go to ``skipped``."""
+    pieces: list[tuple[int, int]] = []
+    stack = list(node.children)  # iterative, as in `_bracket_operators`
+    while stack:
+        n = stack.pop()
+        if n.id in skip:
+            skipped.append((n.start_byte, n.end_byte))
+        elif not n.is_named or n.type in _TEST_WORDS:
+            pieces.append((n.start_byte, n.end_byte))
+        elif n.type == "extglob_pattern":
+            # The right side of `==`/`!=` (`[ a == b* ]`): one word to bash, unless the
+            # grammar read it across an unescaped metacharacter: whitespace ends the word,
+            # and `(`, `|` and the like are shell syntax (`[ x == a(b) ]` is an error).
+            if _unescaped_metachar(n.text):
+                return None
+            pieces.append((n.start_byte, n.end_byte))
+        elif n.type in _TEST_EXPRESSIONS:
+            stack.extend(n.children)
+        else:
+            return None
+    # Pieces with no space between them are one bash word (`a"b"`), as in `_simple`.
+    words: list[list[int]] = []
+    for start, end in sorted(pieces):
+        if words and words[-1][1] == start:
+            words[-1][1] = end
+        else:
+            words.append([start, end])
+    return [(start, end) for start, end in words]
+
+
 def _test_command(walker: Walker, node, ctx: Ctx, depth: int, bound: tuple = ()) -> None:
-    """``[ … ]``: each ``<``/``>`` inside is a redirection bash would perform, with a
-    target the tree does not give, so it is recorded as loose (Rule 1 also marks it)."""
+    """``[ … ]``: bash runs ``[`` as a command like any other (a builtin, which a function
+    or a disabled builtin can replace), so the test is reported as an Invocation of
+    ``[`` with its words, redirects and stdin (#30). Each ``<``/``>`` inside is a
+    redirection bash would perform, with a target the tree does not give, so it is
+    recorded as loose (Rule 1 also marks it). ``[[ … ]]`` is a keyword: no Invocation."""
+    loose: list[Redirect] = []
+    skip: set[int] = set()
     for token in _bracket_redirects(node):
         after = token.next_sibling
         end = after.end_byte if after is not None else token.end_byte
-        walker.layer.redirects.append(
-            Redirect(
-                kind="loose",
-                descriptor=None,
-                operator=token.type,
-                target=None,
-                readable=False,
-                output=False,
-                feed=None,
-                display=walker.span(token.start_byte, end),
-                heredoc_operator=False,
-                start=token.start_byte,
-                in_test=True,
-            )
+        skip.add(token.id)
+        if after is not None:
+            skip.add(after.id)
+        record = Redirect(
+            kind="loose",
+            descriptor=None,
+            operator=token.type,
+            target=None,
+            readable=False,
+            output=False,
+            feed=None,
+            display=walker.span(token.start_byte, end),
+            heredoc_operator=False,
+            start=token.start_byte,
+            in_test=True,
         )
-    _children(walker, node, ctx, depth, bound)
+        walker.layer.redirects.append(record)
+        loose.append(record)
+    if not _is_bracket_test(node):
+        _children(walker, node, ctx, depth, bound)
+        return
+
+    # As for a simple command, the words are expanded before the redirects are
+    # performed: substitutions in them read the stdin the command was given.
+    for child in node.named_children:
+        walker.visit(child, _async(child, ctx), depth + 1)
+    skipped: list[tuple[int, int]] = []
+    spans = _bracket_words(node, skip, skipped)
+    # Cross-check: between the words (and any loose redirect taken out) there is only
+    # blank space, so the words cover the test as bash splits it.
+    covered = sorted((spans or []) + skipped)
+    gaps_ok = spans is not None and all(
+        re.fullmatch(r"[ \t]+", walker.span(a_end, b_start))
+        for (_, a_end), (b_start, _) in zip(covered, covered[1:])
+    )
+    if spans is None or not gaps_ok or not spans or walker.span(*spans[0]) != "[":
+        # Still an invocation of `[`, with the rest as one word the walker cannot read.
+        walker.note_untrusted("[ … ] test the walker cannot split into words")
+        rest = walker.span(node.children[0].end_byte, node.end_byte)
+        words = [Word(text="[", literal=True, source="["),
+                 Word(text=rest, literal=False, source=rest)]
+    else:
+        words = [make_word(walker.span(start, end)) for start, end in spans]
+        # A lone `[` is no glob pattern for bash (it needs a closing `]` in the same word),
+        # so the command name is literal.
+        words[0] = Word(text="[", literal=True, source="[")
+    walker.layer.words.extend(words)
+
+    records: list[Redirect] = []
+    stdin = ctx.stdin
+    for child in sorted(bound, key=lambda n: n.start_byte):
+        before = walker.substitutions
+        visited = walker.visit(child, replace(ctx, stdin=stdin, command_stdin=ctx.stdin),
+                               depth + 1)
+        stdin = _consumed(stdin, walker.substitutions != before)
+        for record in visited:
+            records.append(record)
+            stdin = _stdin_after(record, stdin)
+    if any(r.operator in INPUT_OPERATORS or r.operator == "<>" for r in loose):
+        stdin = UNKNOWN  # a loose `<` inside the test reads a file the tree does not give
+    walker.layer.invocations.append(
+        Invocation(
+            kind="command",
+            words=tuple(words),
+            assignments=(),
+            redirects=tuple(records + loose),
+            stdin=stdin,
+            in_function=ctx.in_function,
+            time_reserved=True,
+        )
+    )
+    walker.spans.append((node.start_byte, node.end_byte, _may_rerun(node)))
 
 
 def _pipeline(walker: Walker, node, ctx: Ctx, depth: int, bound: tuple = ()) -> None:
@@ -1382,14 +1559,14 @@ HANDLERS.update(
 
 def _check_walk(tree: tree_sitter.Tree, walker: Walker) -> None:
     """Rule 2, on every classification: every named node visited exactly once, and one
-    invocation per simple command node."""
+    invocation per simple command node and per `[ … ]` test."""
     named = 0
     simple = 0
     for node in _iter_nodes(tree.root_node):
         if not node.is_named:
             continue
         named += 1
-        if node.type in SIMPLE_KINDS:
+        if node.type in SIMPLE_KINDS or _is_bracket_test(node):
             simple += 1
         if walker.visits.get((node.id, node.start_byte, node.end_byte)) != 1:
             raise ParseRefused("a node was not walked exactly once")
